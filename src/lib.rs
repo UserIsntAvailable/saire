@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_variables)]
+#![warn(rust_2018_idioms, clippy::pedantic)]
 #![feature(array_methods)]
 
 pub(crate) mod block;
