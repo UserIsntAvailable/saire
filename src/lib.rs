@@ -1,14 +1,8 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+#![allow(dead_code, unused_variables)]
+#![feature(array_methods)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod block;
+pub(crate) mod keys;
+pub(crate) mod utils;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+// TODO: `simd` feature.
