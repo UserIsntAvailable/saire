@@ -21,7 +21,7 @@ pub(crate) trait SaiBlock {
     ///
     /// ### DataBlock
     ///
-    /// All 1024 integers ( u32 ) are exclusive-ored with an initial checksum of zero, which is
+    /// All 1024 integers ( data ) are exclusive-ored with an initial checksum of zero, which is
     /// rotated left 1 bit before the exclusive-or operation. Finally the lowest bit is set, making
     /// all checksums an odd number.
     ///
@@ -47,15 +47,12 @@ impl Display for SaiBlockError {
             SaiBlockError::BadSize => {
                 write!(f, "&[u8] needs to be '{}' bytes long.", SAI_BLOCK_SIZE)
             }
-            SaiBlockError::BadChecksum {
-                actual: found,
-                expected,
-            } => {
+            SaiBlockError::BadChecksum { actual, expected } => {
                 write!(
                     f,
                     // FIX: Err message could be improved.
                     "The block's checksum '{}' doesn't match the expected checksum '{}'.",
-                    found, expected
+                    actual, expected
                 )
             }
         }
@@ -77,22 +74,22 @@ pub(crate) struct TableBlock {
 impl TableBlock {
     /// Decrypts a `&[u8]` containing a `TableBlock` structure.
     pub(crate) fn new(bytes: &[u8], index: u32) -> Result<Self, SaiBlockError> {
-        let mut u32 = transmute(bytes)?;
+        let mut data = transmute(bytes)?;
         let mut prev_data = index & !0x1FF;
 
         (0..DATA_SIZE).for_each(|i| {
-            let cur_data = u32[i];
+            let cur_data = data[i];
 
             let x = (prev_data ^ cur_data) ^ decrypt(prev_data);
-            u32[i] = (x << 16) | (x >> 16);
+            data[i] = (x << 16) | (x >> 16);
             prev_data = cur_data;
         });
 
         // SAFETY: If `u32.len()` is `1024`, then `1024 == 512 * 2`.
-        let entries = unsafe { std::mem::transmute::<_, BlockTableEntries>(u32) };
+        let entries = unsafe { std::mem::transmute::<_, BlockTableEntries>(data) };
 
-        u32[0] = 0;
-        let actual_checksum = block_checksum(u32);
+        data[0] = 0;
+        let actual_checksum = block_checksum(data);
         let expected_checksum = entries[0].checksum;
         if expected_checksum == actual_checksum {
             Ok(Self { entries })
@@ -112,25 +109,25 @@ impl SaiBlock for TableBlock {
 }
 
 pub(crate) struct DataBlock {
-    pub(crate) u32: BlockData,
+    pub(crate) data: BlockData,
 }
 
 impl DataBlock {
     /// Decrypts a `&[u8]` containing a `DataBlock` structure.
     pub(crate) fn new(bytes: &[u8], checksum: u32) -> Result<Self, SaiBlockError> {
-        let mut u32 = transmute(bytes)?;
+        let mut data = transmute(bytes)?;
         let mut prev_data = checksum;
 
         (0..DATA_SIZE).for_each(|i| {
-            let cur_data = u32[i];
+            let cur_data = data[i];
 
-            u32[i] = cur_data.wrapping_sub(prev_data ^ decrypt(prev_data));
+            data[i] = cur_data.wrapping_sub(prev_data ^ decrypt(prev_data));
             prev_data = cur_data
         });
 
-        let actual_checksum = block_checksum(u32);
+        let actual_checksum = block_checksum(data);
         if checksum == actual_checksum {
-            Ok(Self { u32 })
+            Ok(Self { data })
         } else {
             Err(SaiBlockError::BadChecksum {
                 actual: actual_checksum,
@@ -142,7 +139,7 @@ impl DataBlock {
 
 impl SaiBlock for DataBlock {
     fn checksum(&self) -> u32 {
-        block_checksum(self.u32)
+        block_checksum(self.data)
     }
 }
 
@@ -150,7 +147,8 @@ impl SaiBlock for DataBlock {
 fn transmute(bytes: &[u8]) -> Result<BlockData, SaiBlockError> {
     assert_eq!(bytes.len(), SAI_BLOCK_SIZE);
 
-    // SAFETY: `assert_eq` constrains bytes to be `4096`, so that means `4096 == 1024 * 4`.
+    // SAFETY: `assert_eq` constrains bytes to be `4096` long, so that guarantees that bytes can be
+    // `transmute`d to `BlockData`.
     Ok(unsafe {
         std::mem::transmute::<[u8; SAI_BLOCK_SIZE], BlockData>(
             bytes.try_into().map_err(|_| SaiBlockError::BadSize)?,
@@ -166,8 +164,8 @@ fn decrypt(data: u32) -> u32 {
 }
 
 #[inline]
-fn block_checksum(u32: BlockData) -> u32 {
-    (0..DATA_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ u32[i]) | 1
+fn block_checksum(data: BlockData) -> u32 {
+    (0..DATA_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ data[i]) | 1
 }
 
 #[cfg(test)]
