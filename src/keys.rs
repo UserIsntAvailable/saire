@@ -1,4 +1,5 @@
-// TODO: This is too noisy so will put it here for the moment.
+// TODO: This is too noisy so will put it here for the moment. I think I can move this into
+// `block.rs`.
 
 pub const USER: [u32; 256] = [
     0x9913D29E, 0x83F58D3D, 0xD0BE1526, 0x86442EB7, 0x7EC69BFB, 0x89D75F64, 0xFB51B239, 0xFF097C56,
