@@ -1,8 +1,9 @@
-use crate::block::{DataBlock, Inode, InodeType, TableBlock, SAI_BLOCK_SIZE};
-
 // TODO: For now this is not the most efficient way to traverse the file system. I'm not really sure
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
+
+use crate::block::{data::DataBlock, table::TableBlock, SAI_BLOCK_SIZE};
+use crate::{Inode, InodeType};
 
 pub enum VisitAction {
     File,
@@ -10,22 +11,22 @@ pub enum VisitAction {
     FolderEnd,
 }
 
-pub trait FileSystemVisitor {
+pub trait Visitor {
     fn visit(&mut self, action: VisitAction, inode: &Inode) -> bool;
 }
 
-pub struct SaiFileSystem<'a> {
+pub struct FileSystemVisitor<'a> {
     bytes: &'a [u8],
 }
 
-impl<'a> SaiFileSystem<'a> {
-    pub fn visit_root(&self, visitor: &mut impl FileSystemVisitor) {
+impl<'a> FileSystemVisitor<'a> {
+    pub fn visit_root(&self, visitor: &mut impl Visitor) {
         self.visit_inode(2, visitor)
     }
 
     // FIX: Validation should be probably dealt on the `from()`, or `new()` methods. So I will
     // unwrap here for the moment.
-    pub fn visit_inode(&self, index: usize, visitor: &mut impl FileSystemVisitor) {
+    pub fn visit_inode(&self, index: usize, visitor: &mut impl Visitor) {
         let table_index = index & !0x1FF;
 
         // FIX: Inefficient
@@ -63,7 +64,7 @@ fn block_at(bytes: &[u8], i: usize) -> &[u8] {
     &bytes[SAI_BLOCK_SIZE * i..SAI_BLOCK_SIZE * (i + 1)]
 }
 
-impl<'a> From<&'a [u8]> for SaiFileSystem<'a> {
+impl<'a> From<&'a [u8]> for FileSystemVisitor<'a> {
     fn from(bytes: &'a [u8]) -> Self {
         assert_eq!(
             bytes.len() & 0x1FF,
@@ -80,13 +81,12 @@ impl<'a> From<&'a [u8]> for SaiFileSystem<'a> {
 mod tests {
     use super::VisitAction;
     use crate::{
-        block::{Inode, InodeType},
-        fs::{FileSystemVisitor, SaiFileSystem},
-        utils::path::read_res,
+        block::data::{Inode, InodeType},
+        utils::path::read_res, fs::visitor::{Visitor, FileSystemVisitor},
     };
     use eyre::Result;
     use lazy_static::lazy_static;
-    use std::{fs::read, fmt::Display};
+    use std::{fmt::Display, fs::read};
     use tabular::{Row, Table};
 
     lazy_static! {
@@ -108,7 +108,7 @@ mod tests {
                         .with_cell("")
                         .with_cell("d")
                         .with_cell(date)
-                        .with_cell(format!("/{}", inode.name())),
+                        .with_cell(format!("{}/", inode.name())),
                     InodeType::File => Row::new()
                         .with_cell(inode.size())
                         .with_cell("f")
@@ -138,7 +138,7 @@ mod tests {
             }
         }
 
-        impl FileSystemVisitor for TreeVisitor {
+        impl Visitor for TreeVisitor {
             fn visit(&mut self, action: VisitAction, inode: &Inode) -> bool {
                 match action {
                     VisitAction::File => self.add_row(inode),
@@ -154,7 +154,7 @@ mod tests {
         }
 
         let mut visitor = TreeVisitor::default();
-        SaiFileSystem::from(BYTES.as_slice()).visit_root(&mut visitor);
+        FileSystemVisitor::from(BYTES.as_slice()).visit_root(&mut visitor);
 
         assert_eq!(
             // just to align the output.
@@ -163,7 +163,7 @@ mod tests {
      32 f 2019-09-03 .73851dcd1203b24d
      56 f 2019-09-03 canvas
      12 f 2019-09-03 laytbl
-        d 2019-09-03 /layers
+        d 2019-09-03 layers/
 2404129 f 2019-09-03  00000002
   78412 f 2019-09-03 thumbnail
 "#

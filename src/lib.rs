@@ -2,11 +2,13 @@
 #![warn(rust_2018_idioms, clippy::pedantic)]
 #![feature(array_methods)]
 
-pub(crate) mod block;
-pub(crate) mod keys;
+pub mod fs;
+pub mod block;
+
 pub(crate) mod utils;
-pub(crate) mod fs;
+
+pub use crate::block::data::Inode;
+pub use crate::block::data::InodeType;
 
 // TODO: `simd` feature.
-//
 // TODO: Remove the `Sai` prefix from structs/enums?
