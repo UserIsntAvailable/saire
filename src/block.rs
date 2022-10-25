@@ -1,12 +1,13 @@
 use crate::keys::USER;
-use std::{mem::size_of, fmt::Display};
+use std::{fmt::Display, mem::size_of};
 
 pub(crate) const SAI_BLOCK_SIZE: usize = 0x1000;
 pub(crate) const BLOCKS_PER_PAGE: usize = SAI_BLOCK_SIZE / 8;
-pub(crate) const DATA_SIZE: usize = SAI_BLOCK_SIZE / size_of::<u32>();
+pub(crate) const DECRYPTED_BUFFER_SIZE: usize = SAI_BLOCK_SIZE / size_of::<u32>();
 
-pub(crate) type BlockData = [u32; DATA_SIZE];
-pub(crate) type TableEntries = [TableEntry; SAI_BLOCK_SIZE / size_of::<TableEntry>()];
+pub(crate) type DecryptedBuffer = [u32; DECRYPTED_BUFFER_SIZE];
+pub(crate) type TableEntryBuffer = [TableEntry; SAI_BLOCK_SIZE / size_of::<TableEntry>()];
+pub(crate) type InodeBuffer = [Inode; SAI_BLOCK_SIZE / size_of::<Inode>()];
 
 // FIX: Remove `SaiBlock::checksum()` if it is not needed outside this mod.
 //
@@ -80,7 +81,7 @@ pub struct TableEntry {
 }
 
 pub(crate) struct TableBlock {
-    pub(crate) entries: TableEntries,
+    pub(crate) entries: TableEntryBuffer,
 }
 
 impl TableBlock {
@@ -89,7 +90,7 @@ impl TableBlock {
         let mut data = as_u32(bytes)?;
         let mut prev_data = index & !0x1FF;
 
-        (0..DATA_SIZE).for_each(|i| {
+        (0..DECRYPTED_BUFFER_SIZE).for_each(|i| {
             let cur_data = data[i];
 
             let x = (prev_data ^ cur_data) ^ decrypt(prev_data);
@@ -99,12 +100,12 @@ impl TableBlock {
 
         // SAFETY: `data` has valid `u32`s.
         //
-        // - `data` is not a borrowed array, and return type `TableEntry` is not &mut.
+        // - `data` is not a borrowed array, and return type `TableEntryBuffer` is not &mut.
         //
-        // - `TableEntry` doens't need lifetimes.
+        // - `TableEntry` doens't have any lifetimes.
         //
-        // - `TableEntry` is `repr(C)`, so the memory layout is respected.
-        let entries = unsafe { std::mem::transmute::<_, TableEntries>(data) };
+        // - `TableEntry` is `repr(C)`, so the memory layout is precisely defined.
+        let entries = unsafe { std::mem::transmute::<_, TableEntryBuffer>(data) };
 
         data[0] = 0;
         let actual_checksum = checksum(data);
@@ -120,14 +121,93 @@ impl TableBlock {
         }
     }
 }
+
 impl SaiBlock for TableBlock {
     fn checksum(&self) -> u32 {
         self.entries[0].checksum
     }
 }
 
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum InodeType {
+    Folder = 0x10,
+    File = 0x80,
+}
+
+#[repr(C)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Inode {
+    flags: u32,
+    name: [u8; 32],
+    /// Always `0`.
+    _pad1: u8,
+    /// Always `0`.
+    _pad2: u8,
+    r#type: InodeType,
+    /// Always `0`.
+    _pad3: u8,
+    next_block: u32,
+    size: u32,
+    /// Windows FILETIME
+    timestamp: u64,
+    /// Gets send as window message.
+    _unknown: u64,
+}
+
+impl Inode {
+    /// If `0` the inode is considered unused.
+    pub(crate) fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The name of the inode.
+    pub(crate) fn name(&self) -> &str {
+        let name = self.name.as_ptr() as *const u8;
+        // SAFETY: `name` is a valid pointer.
+        //
+        // - `self.data` is contiguous, because it is an array of `u32`s.
+        //
+        // - the total size of the slice is always guaranteed to be of length 32.
+        //
+        // - slice ( the return value ), will not be modified, since it is not a &mut.
+        let slice = unsafe { std::slice::from_raw_parts(name, 32) };
+
+        // SAFETY: `self.name` guarantees to have valid `utf8` ( ASCII ) values.
+        let str = unsafe { std::str::from_utf8_unchecked(slice) };
+
+        // stops at the first NULL character to make '==' easier on the rust side.
+        // FIX: For some reason there is a `#01` appended to the name.
+        &str[str.find(".").unwrap()..str.find('\0').unwrap()]
+    }
+
+    // FIX: Better name field name.
+    /// The type of the inode.
+    pub(crate) fn r#type(&self) -> &InodeType {
+        &self.r#type
+    }
+
+    /// The next `DataBlock` index where the next inodes for this inode are located. Only set if
+    /// `self.r#type == InodeType::Folder`.
+    pub(crate) fn next_block(&self) -> u32 {
+        self.next_block
+    }
+
+    /// The amount of contiguous bytes to read from the current `DataBlock` to get the entry
+    /// contents. Only set if `self.r#type == InodeType::File`.
+    pub(crate) fn size(&self) -> u32 {
+        self.size
+    }
+
+    /// The amount of seconds passed since `January 1, 1970` ( epoch ).
+    pub(crate) fn timestamp(&self) -> u64 {
+        self.timestamp / 10000000 - 11644473600
+    }
+}
+
 pub(crate) struct DataBlock {
-    pub(crate) data: BlockData,
+    checksum: u32,
+    pub(crate) inodes: InodeBuffer,
 }
 
 impl DataBlock {
@@ -136,16 +216,29 @@ impl DataBlock {
         let mut data = as_u32(bytes)?;
         let mut prev_data = table_checksum;
 
-        (0..DATA_SIZE).for_each(|i| {
+        (0..DECRYPTED_BUFFER_SIZE).for_each(|i| {
             let cur_data = data[i];
 
             data[i] = cur_data.wrapping_sub(prev_data ^ decrypt(prev_data));
             prev_data = cur_data
         });
 
+        // SAFETY: `data` has valid `u32`s.
+        //
+        // - `data` is not a borrowed array, and return type `InodeBuffer` is not &mut.
+        //
+        // - `Inode` doens't have any lifetimes.
+        //
+        // - `Inode` is `repr(C)`, so the memory layout is precisely defined.
+        let inodes = unsafe { std::mem::transmute::<_, InodeBuffer>(data) };
+
         let actual_checksum = checksum(data);
+
         if table_checksum == actual_checksum {
-            Ok(Self { data })
+            Ok(Self {
+                checksum: actual_checksum,
+                inodes,
+            })
         } else {
             Err(SaiBlockError::BadChecksum {
                 actual: actual_checksum,
@@ -157,12 +250,12 @@ impl DataBlock {
 
 impl SaiBlock for DataBlock {
     fn checksum(&self) -> u32 {
-        checksum(self.data)
+        self.checksum
     }
 }
 
 #[inline]
-fn as_u32(bytes: &[u8]) -> Result<BlockData, SaiBlockError> {
+fn as_u32(bytes: &[u8]) -> Result<DecryptedBuffer, SaiBlockError> {
     if bytes.len() != SAI_BLOCK_SIZE {
         Err(SaiBlockError::BadSize)
     } else {
@@ -175,8 +268,8 @@ fn as_u32(bytes: &[u8]) -> Result<BlockData, SaiBlockError> {
         // - since `bytes.len` needs to be equal to `SAI_BLOCK_SIZE`, then size for the slice needs
         // to be `SAI_BLOCK_SIZE / 4` ( DATA_SIZE ), because u32 is 4 times bigger than a u8.
         //
-        // - slice ( the return value ), will not be modified, since it is not `mut` borrowed.
-        let slice = unsafe { std::slice::from_raw_parts(bytes, DATA_SIZE) };
+        // - slice ( the return value ), will not be modified, since it is not a &mut.
+        let slice = unsafe { std::slice::from_raw_parts(bytes, DECRYPTED_BUFFER_SIZE) };
 
         Ok(slice.try_into().unwrap())
     }
@@ -190,15 +283,15 @@ fn decrypt(data: u32) -> u32 {
 }
 
 #[inline]
-fn checksum(data: BlockData) -> u32 {
-    (0..DATA_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ data[i]) | 1
+fn checksum(data: DecryptedBuffer) -> u32 {
+    (0..DECRYPTED_BUFFER_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ data[i]) | 1
 }
 
 #[cfg(test)]
 mod tests {
     use super::SAI_BLOCK_SIZE;
     use crate::{
-        block::{DataBlock, TableBlock},
+        block::{DataBlock, InodeType, TableBlock},
         utils::path::read_res,
     };
     use eyre::Result;
@@ -213,18 +306,31 @@ mod tests {
     }
 
     #[test]
-    fn table_checksum_works() -> Result<()> {
-        // Will panic if `index` is not valid.
-        TableBlock::new(*TABLE, 0)?;
+    fn table_new_works() -> Result<()> {
+        assert!(TableBlock::new(*TABLE, 0).is_ok());
 
         Ok(())
     }
 
     #[test]
-    fn data_checksum_works() -> Result<()> {
+    fn data_new_works() -> Result<()> {
         let table_entries = TableBlock::new(*TABLE, 0)?.entries;
-        // Will panic if `checksum` is not valid.
-        DataBlock::new(*DATA, table_entries[2].checksum)?;
+        assert!(DataBlock::new(*DATA, table_entries[2].checksum).is_ok());
+
+        Ok(())
+    }
+
+    #[test]
+    fn data_new_has_valid_data() -> Result<()> {
+        let table_entries = TableBlock::new(*TABLE, 0)?.entries;
+        let inodes = DataBlock::new(*DATA, table_entries[2].checksum)?.inodes;
+        let inode = &inodes[0];
+
+        assert_eq!(inode.flags(), 2147483648);
+        assert_eq!(inode.name(), ".73851dcd1203b24d");
+        assert_eq!(inode.r#type(), &InodeType::File);
+        assert_eq!(inode.size(), 32);
+        assert_eq!(inode.timestamp(), 1567531938);
 
         Ok(())
     }
