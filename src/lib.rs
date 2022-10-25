@@ -5,6 +5,7 @@
 pub(crate) mod block;
 pub(crate) mod keys;
 pub(crate) mod utils;
+pub(crate) mod fs;
 
 // TODO: `simd` feature.
 //

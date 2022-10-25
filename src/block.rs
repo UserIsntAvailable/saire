@@ -137,7 +137,7 @@ pub(crate) enum InodeType {
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Inode {
+pub struct Inode {
     flags: u32,
     name: [u8; 32],
     /// Always `0`.
@@ -178,7 +178,7 @@ impl Inode {
 
         // stops at the first NULL character to make '==' easier on the rust side.
         // FIX: For some reason there is a `#01` appended to the name.
-        &str[str.find(".").unwrap()..str.find('\0').unwrap()]
+        &str[str.find('.').unwrap_or_default()..str.find('\0').unwrap()]
     }
 
     // FIX: Better name field name.
