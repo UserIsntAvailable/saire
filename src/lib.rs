@@ -2,8 +2,8 @@
 #![warn(rust_2018_idioms, clippy::pedantic)]
 #![feature(array_methods)]
 
-pub mod fs;
 pub mod block;
+pub mod fs;
 
 pub(crate) mod utils;
 

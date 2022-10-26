@@ -2,6 +2,7 @@
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
 
+use crate::block::BLOCKS_PER_PAGE;
 use crate::block::{data::DataBlock, table::TableBlock, SAI_BLOCK_SIZE};
 use crate::{Inode, InodeType};
 
@@ -30,10 +31,18 @@ impl<'a> FileSystemVisitor<'a> {
         let table_index = index & !0x1FF;
 
         // FIX: Inefficient
-        #[rustfmt::skip] let entries = TableBlock::new(block_at(self.bytes, table_index), table_index as u32).unwrap().entries;
-        #[rustfmt::skip] let inodes = DataBlock::new(block_at(self.bytes, index), entries[index].checksum).unwrap().inodes;
+        let entries = TableBlock::new(block_at(self.bytes, table_index), table_index as u32)
+            .unwrap()
+            .entries;
 
-        for inode in inodes {
+        let data_block = DataBlock::new(
+            block_at(self.bytes, index),
+            entries[index % BLOCKS_PER_PAGE].checksum,
+        )
+        .unwrap();
+
+        // SAFETY: `data_block` fields have same length, but represented differently.
+        for inode in unsafe { data_block.inodes } {
             if inode.flags() == 0 {
                 break;
             }
@@ -82,7 +91,8 @@ mod tests {
     use super::VisitAction;
     use crate::{
         block::data::{Inode, InodeType},
-        utils::path::read_res, fs::visitor::{Visitor, FileSystemVisitor},
+        fs::visitor::{FileSystemVisitor, Visitor},
+        utils::path::read_res,
     };
     use eyre::Result;
     use lazy_static::lazy_static;
@@ -94,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    // I might provide this as an public API later.
+    // TODO: I might provide this as an public API later.
     fn tree_view() -> Result<()> {
         #[rustfmt::skip] struct TreeVisitor { folder_depth: usize, table: Table }
 
@@ -134,7 +144,7 @@ mod tests {
 
         impl Display for TreeVisitor {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.table.to_string())
+                write!(f, "{}", self.table)
             }
         }
 

@@ -1,7 +1,7 @@
 use super::*;
 
 #[repr(C)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) struct TableEntry {
     pub(crate) checksum: u32,
     pub(crate) next_block: u32,
@@ -32,7 +32,8 @@ impl TableBlock {
         // - `TableEntry` doens't have any lifetimes.
         //
         // - `TableEntry` is `repr(C)`, so the memory layout is precisely defined.
-        let entries = unsafe { std::mem::transmute::<_, TableEntryBuffer>(data) };
+        // let entries = unsafe { std::mem::transmute::<_, TableEntryBuffer>(data) };
+        let entries = unsafe { *(data.as_ptr() as *const TableEntryBuffer) };
 
         data[0] = 0;
         let actual_checksum = checksum(data);

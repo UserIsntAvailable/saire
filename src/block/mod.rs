@@ -34,21 +34,11 @@ impl std::error::Error for Error {}
 pub(crate) const SAI_BLOCK_SIZE: usize = 0x1000;
 pub(crate) const BLOCKS_PER_PAGE: usize = SAI_BLOCK_SIZE / 8;
 pub(crate) const DECRYPTED_BUFFER_SIZE: usize = SAI_BLOCK_SIZE / size_of::<u32>();
+
+pub(crate) type BlockBuffer = [u8; SAI_BLOCK_SIZE];
 pub(crate) type DecryptedBuffer = [u32; DECRYPTED_BUFFER_SIZE];
 pub(crate) type TableEntryBuffer = [TableEntry; SAI_BLOCK_SIZE / size_of::<TableEntry>()];
 pub(crate) type InodeBuffer = [Inode; SAI_BLOCK_SIZE / size_of::<Inode>()];
-
-// FIX: Remove `SaiBlock::checksum()` if it is not needed outside this mod.
-//
-// FIX: There might be an argument to include a `decrypt()` method on `SaiBlock`, instead of
-// decrypting the block directly on the `new()` function. I.e: `DataBlock`s don't need to be fully
-// decrypted, since some entries might not be used. It doesn't matter much, but it affects
-// `slightly` speed performance (transmutes should be fairly fast), but must notably it will affect
-// size (because I'm will be allocating all entries), and it makes the API more unpredictable,
-// because if the provided bytes don't have valid data it might break my `safeness` around `unsafe`
-// blocks. You could argue that it is pretty hard to validated if the data is on good condition to
-// begin with, but I don't know if the SAI team is also keeping that in mind ( probably no, so for
-// now I will ignore it; maybe on the future I can improve over this. )
 
 /// A `.sai` is encrypted in ECB blocks in which any randomly accessed block can be decrypted by
 /// also decrypting the appropriate `TableBlock` and accessing its 32-bit key found within.
@@ -220,7 +210,9 @@ mod tests {
     #[test]
     fn data_new_has_valid_data() -> Result<()> {
         let table_entries = TableBlock::new(*TABLE, 0)?.entries;
-        let inodes = DataBlock::new(*DATA, table_entries[2].checksum)?.inodes;
+        let data_block = DataBlock::new(*DATA, table_entries[2].checksum)?;
+        // SAFETY: `data_block` fields have same length, but represented differently.
+        let inodes = unsafe { data_block.inodes };
         let inode = &inodes[0];
 
         assert_eq!(inode.flags(), 2147483648);

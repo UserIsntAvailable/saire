@@ -1,17 +1,17 @@
 use super::*;
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum InodeType {
     Folder = 0x10,
     File = 0x80,
 }
 
 #[repr(C)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Inode {
     flags: u32,
-    name: [std::ffi::c_char; 32],
+    name: [std::ffi::c_uchar; 32],
     /// Always `0`.
     _pad1: u8,
     /// Always `0`.
@@ -29,13 +29,13 @@ pub struct Inode {
 
 impl Inode {
     /// If `0` the inode is considered unused.
-    pub(crate) fn flags(&self) -> u32 {
+    pub fn flags(&self) -> u32 {
         self.flags
     }
 
     /// The name of the inode.
-    pub(crate) fn name(&self) -> &str {
-        let name = self.name.as_ptr() as *const u8;
+    pub fn name(&self) -> &str {
+        let name = self.name.as_ptr();
         // SAFETY: `name` is a valid pointer.
         //
         // - `self.data` is contiguous, because it is an array of `u32`s.
@@ -53,32 +53,34 @@ impl Inode {
         &str[str.find('.').unwrap_or_default()..str.find('\0').unwrap()]
     }
 
-    // FIX: Better name field name.
+    // FIX: Better name?.
     /// The type of the inode.
-    pub(crate) fn r#type(&self) -> &InodeType {
+    pub fn r#type(&self) -> &InodeType {
         &self.r#type
     }
 
     /// The next `DataBlock` index where the next inodes for this inode are located. Only set if
     /// `self.r#type == InodeType::Folder`.
-    pub(crate) fn next_block(&self) -> u32 {
+    pub fn next_block(&self) -> u32 {
         self.next_block
     }
 
     /// The amount of contiguous bytes to read from the current `DataBlock` to get the entry
     /// contents. Only set if `self.r#type == InodeType::File`.
-    pub(crate) fn size(&self) -> u32 {
+    pub fn size(&self) -> u32 {
         self.size
     }
 
     /// The amount of seconds passed since `January 1, 1970` ( epoch ).
-    pub(crate) fn timestamp(&self) -> u64 {
+    pub fn timestamp(&self) -> u64 {
         self.timestamp / 10000000 - 11644473600
     }
 }
 
-pub(crate) struct DataBlock {
-    checksum: u32,
+pub(crate) union DataBlock {
+    pub(crate) raw: BlockBuffer,
+    u32: DecryptedBuffer,
+    // SAFETY: `Inode` is `repr(C)`, so the memory layout is precisely defined.
     pub(crate) inodes: InodeBuffer,
 }
 
@@ -95,22 +97,9 @@ impl DataBlock {
             prev_data = cur_data
         });
 
-        // SAFETY: `data` has valid `u32`s.
-        //
-        // - `data` is not a borrowed array, and return type `InodeBuffer` is not &mut.
-        //
-        // - `Inode` doens't have any lifetimes.
-        //
-        // - `Inode` is `repr(C)`, so the memory layout is precisely defined.
-        let inodes = unsafe { std::mem::transmute::<_, InodeBuffer>(data) };
-
         let actual_checksum = checksum(data);
-
         if table_checksum == actual_checksum {
-            Ok(Self {
-                checksum: actual_checksum,
-                inodes,
-            })
+            Ok(Self { u32: data })
         } else {
             Err(Error::BadChecksum {
                 actual: actual_checksum,
@@ -122,6 +111,6 @@ impl DataBlock {
 
 impl SaiBlock for DataBlock {
     fn checksum(&self) -> u32 {
-        self.checksum
+        checksum(unsafe { self.u32 })
     }
 }
