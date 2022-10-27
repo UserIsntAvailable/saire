@@ -13,21 +13,22 @@ pub enum VisitAction {
 }
 
 pub trait Visitor {
-    fn visit(&mut self, action: VisitAction, inode: &Inode) -> bool;
+    fn visit(&self, action: VisitAction, inode: &Inode) -> bool;
 }
 
+// TODO: rename to just visitor? we are on the `fs` module already.
 pub struct FileSystemVisitor<'a> {
     bytes: &'a [u8],
 }
 
 impl<'a> FileSystemVisitor<'a> {
-    pub fn visit_root(&self, visitor: &mut impl Visitor) {
+    pub fn visit_root(&self, visitor: &impl Visitor) {
         self.visit_inode(2, visitor)
     }
 
     // FIX: Validation should be probably dealt on the `from()`, or `new()` methods. So I will
     // unwrap here for the moment.
-    pub fn visit_inode(&self, index: usize, visitor: &mut impl Visitor) {
+    pub fn visit_inode(&self, index: usize, visitor: &impl Visitor) {
         let table_index = index & !0x1FF;
 
         // FIX: Inefficient
@@ -77,7 +78,7 @@ impl<'a> From<&'a [u8]> for FileSystemVisitor<'a> {
         assert_eq!(
             bytes.len() & 0x1FF,
             0,
-            "bytes should be block aligned (divisable by {}).",
+            "the len of bytes should be block aligned (divisable by {}).",
             SAI_BLOCK_SIZE
         );
 
@@ -95,7 +96,11 @@ mod tests {
     };
     use eyre::Result;
     use lazy_static::lazy_static;
-    use std::{fmt::Display, fs::read};
+    use std::{
+        cell::{Cell, RefCell},
+        fmt::Display,
+        fs::read,
+    };
     use tabular::{Row, Table};
 
     lazy_static! {
@@ -105,14 +110,14 @@ mod tests {
     #[test]
     // TODO: I might provide this as an public API later.
     fn tree_view() -> Result<()> {
-        #[rustfmt::skip] struct TreeVisitor { folder_depth: usize, table: Table }
+        #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
         impl TreeVisitor {
-            fn add_row(&mut self, inode: &Inode) {
+            fn add_row(&self, inode: &Inode) {
                 let date = chrono::NaiveDateTime::from_timestamp(inode.timestamp() as i64, 0)
                     .format("%Y-%m-%d");
 
-                self.table.add_row(match inode.r#type() {
+                self.table.borrow_mut().add_row(match inode.r#type() {
                     InodeType::Folder => Row::new()
                         .with_cell("")
                         .with_cell("d")
@@ -126,7 +131,7 @@ mod tests {
                             "{empty: >width$}{}",
                             inode.name(),
                             empty = "",
-                            width = self.folder_depth
+                            width = self.depth.get()
                         )),
                 });
             }
@@ -135,28 +140,30 @@ mod tests {
         impl Default for TreeVisitor {
             fn default() -> Self {
                 Self {
-                    folder_depth: 0,
-                    table: Table::new("{:>} {:<} {:<} {:<}"),
+                    depth: Cell::new(0),
+                    table: RefCell::new(Table::new("{:>} {:<} {:<} {:<}")),
                 }
             }
         }
 
         impl Display for TreeVisitor {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{}", self.table)
+                write!(f, "{}", self.table.borrow())
             }
         }
 
         impl Visitor for TreeVisitor {
-            fn visit(&mut self, action: VisitAction, inode: &Inode) -> bool {
+            fn visit(&self, action: VisitAction, inode: &Inode) -> bool {
                 match action {
                     VisitAction::File => self.add_row(inode),
                     VisitAction::FolderStart => {
                         self.add_row(inode);
-                        self.folder_depth += 1;
+                        self.depth.update(|v| v + 1);
                     }
-                    VisitAction::FolderEnd => self.folder_depth -= 1,
-                }
+                    VisitAction::FolderEnd => {
+                        self.depth.update(|v| v - 1);
+                    }
+                };
 
                 false
             }

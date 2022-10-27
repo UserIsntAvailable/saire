@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_variables)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
-#![feature(array_methods)]
+#![feature(array_methods, cell_update)]
 
 pub mod block;
 pub mod fs;

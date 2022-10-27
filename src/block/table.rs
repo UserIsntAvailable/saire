@@ -51,8 +51,4 @@ impl TableBlock {
     }
 }
 
-impl SaiBlock for TableBlock {
-    fn checksum(&self) -> u32 {
-        self.entries[0].checksum
-    }
-}
+#[rustfmt::skip] impl SaiBlock for TableBlock { fn checksum(&self) -> u32 { self.entries[0].checksum } }
