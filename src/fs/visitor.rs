@@ -41,8 +41,7 @@ impl<'a> FileSystemVisitor<'a> {
         )
         .unwrap();
 
-        // SAFETY: `data_block` fields have same length, but represented differently.
-        for inode in unsafe { data_block.inodes } {
+        for inode in data_block.as_inodes() {
             if inode.flags() == 0 {
                 break;
             }

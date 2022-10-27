@@ -25,15 +25,16 @@ impl TableBlock {
             prev_data = cur_data;
         });
 
-        // SAFETY: `data` has valid `u32`s.
+        let ptr = data.as_ptr();
+
+        // SAFETY: `ptr` is a valid pointer.
         //
-        // - `data` is not a borrowed array, and return type `TableEntryBuffer` is not &mut.
+        // - It can't be null.
         //
-        // - `TableEntry` doens't have any lifetimes.
+        // - The data is not dangling.
         //
-        // - `TableEntry` is `repr(C)`, so the memory layout is precisely defined.
-        // let entries = unsafe { std::mem::transmute::<_, TableEntryBuffer>(data) };
-        let entries = unsafe { *(data.as_ptr() as *const TableEntryBuffer) };
+        // - `TableEntry` is `repr(C)`, so the memory layout is aligned.
+        let entries = unsafe { *(ptr as *const TableEntryBuffer) };
 
         data[0] = 0;
         let actual_checksum = checksum(data);

@@ -1,14 +1,14 @@
 use super::*;
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum InodeType {
     Folder = 0x10,
     File = 0x80,
 }
 
 #[repr(C)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Inode {
     flags: u32,
     name: [std::ffi::c_uchar; 32],
@@ -77,11 +77,9 @@ impl Inode {
     }
 }
 
-pub(crate) union DataBlock {
-    pub(crate) raw: BlockBuffer,
+pub(crate) struct DataBlock {
+    checksum: u32,
     u32: DecryptedBuffer,
-    // SAFETY: `Inode` is `repr(C)`, so the memory layout is precisely defined.
-    pub(crate) inodes: InodeBuffer,
 }
 
 impl DataBlock {
@@ -99,7 +97,10 @@ impl DataBlock {
 
         let actual_checksum = checksum(data);
         if table_checksum == actual_checksum {
-            Ok(Self { u32: data })
+            Ok(Self {
+                checksum: actual_checksum,
+                u32: data,
+            })
         } else {
             Err(Error::BadChecksum {
                 actual: actual_checksum,
@@ -107,10 +108,30 @@ impl DataBlock {
             })
         }
     }
-}
 
-impl SaiBlock for DataBlock {
-    fn checksum(&self) -> u32 {
-        checksum(unsafe { self.u32 })
+    pub(crate) fn as_bytes(&self) -> &BlockBuffer {
+        let ptr = self.u32.as_ptr();
+
+        // SAFETY: `ptr` is a valid pointer.
+        //
+        // - It can't be null.
+        //
+        // - The data is not dangling.
+        unsafe { &*(ptr as *const BlockBuffer) }
+    }
+
+    pub(crate) fn as_inodes(&self) -> &InodeBuffer {
+        let ptr = self.u32.as_ptr();
+
+        // SAFETY: `ptr` is a valid pointer.
+        //
+        // - It can't be null.
+        //
+        // - The data is not dangling.
+        //
+        // - `Inode` is `repr(C)`, so the memory layout is aligned.
+        unsafe { &*(ptr as *const InodeBuffer) }
     }
 }
+
+#[rustfmt::skip] impl SaiBlock for DataBlock { fn checksum(&self) -> u32 { self.checksum } }

@@ -211,8 +211,7 @@ mod tests {
     fn data_new_has_valid_data() -> Result<()> {
         let table_entries = TableBlock::new(*TABLE, 0)?.entries;
         let data_block = DataBlock::new(*DATA, table_entries[2].checksum)?;
-        // SAFETY: `data_block` fields have same length, but represented differently.
-        let inodes = unsafe { data_block.inodes };
+        let inodes = data_block.as_inodes();
         let inode = &inodes[0];
 
         assert_eq!(inode.flags(), 2147483648);
