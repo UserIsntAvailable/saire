@@ -12,23 +12,20 @@ pub enum VisitAction {
     FolderEnd,
 }
 
-pub trait Visitor {
-    fn visit(&self, action: VisitAction, inode: &Inode) -> bool;
-}
-
-// TODO: rename to just visitor? we are on the `fs` module already.
 pub struct FileSystemVisitor<'a> {
     bytes: &'a [u8],
 }
 
 impl<'a> FileSystemVisitor<'a> {
-    pub fn visit_root(&self, visitor: &impl Visitor) {
-        self.visit_inode(2, visitor)
+    pub fn visit_root(&self, visitor: impl Fn(VisitAction, &Inode) -> bool) {
+        let ref_visitor = &visitor;
+
+        self.visit_inode(2, &visitor)
     }
 
     // FIX: Validation should be probably dealt on the `from()`, or `new()` methods. So I will
     // unwrap here for the moment.
-    pub fn visit_inode(&self, index: usize, visitor: &impl Visitor) {
+    fn visit_inode(&self, index: usize, visitor: &impl Fn(VisitAction, &Inode) -> bool) {
         let table_index = index & !0x1FF;
 
         // FIX: Inefficient
@@ -49,18 +46,18 @@ impl<'a> FileSystemVisitor<'a> {
 
             match inode.r#type() {
                 InodeType::File => {
-                    if visitor.visit(VisitAction::File, &inode) {
+                    if visitor(VisitAction::File, &inode) {
                         break;
                     }
                 }
                 InodeType::Folder => {
-                    if visitor.visit(VisitAction::FolderStart, &inode) {
+                    if visitor(VisitAction::FolderStart, &inode) {
                         break;
                     };
 
                     self.visit_inode(inode.next_block() as usize, visitor);
 
-                    if visitor.visit(VisitAction::FolderEnd, &inode) {
+                    if visitor(VisitAction::FolderEnd, &inode) {
                         break;
                     };
                 }
@@ -91,7 +88,7 @@ mod tests {
     use super::VisitAction;
     use crate::{
         block::data::{Inode, InodeType},
-        fs::visitor::{FileSystemVisitor, Visitor},
+        fs::visitor::FileSystemVisitor,
         utils::path::read_res,
     };
     use eyre::Result;
@@ -113,6 +110,21 @@ mod tests {
         #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
         impl TreeVisitor {
+            fn visit(&self, action: VisitAction, inode: &Inode) -> bool {
+                match action {
+                    VisitAction::File => self.add_row(inode),
+                    VisitAction::FolderStart => {
+                        self.add_row(inode);
+                        self.depth.update(|v| v + 1);
+                    }
+                    VisitAction::FolderEnd => {
+                        self.depth.update(|v| v - 1);
+                    }
+                };
+
+                false
+            }
+
             fn add_row(&self, inode: &Inode) {
                 let date = chrono::NaiveDateTime::from_timestamp(inode.timestamp() as i64, 0)
                     .format("%Y-%m-%d");
@@ -152,25 +164,8 @@ mod tests {
             }
         }
 
-        impl Visitor for TreeVisitor {
-            fn visit(&self, action: VisitAction, inode: &Inode) -> bool {
-                match action {
-                    VisitAction::File => self.add_row(inode),
-                    VisitAction::FolderStart => {
-                        self.add_row(inode);
-                        self.depth.update(|v| v + 1);
-                    }
-                    VisitAction::FolderEnd => {
-                        self.depth.update(|v| v - 1);
-                    }
-                };
-
-                false
-            }
-        }
-
-        let mut visitor = TreeVisitor::default();
-        FileSystemVisitor::from(BYTES.as_slice()).visit_root(&mut visitor);
+        let visitor = TreeVisitor::default();
+        FileSystemVisitor::from(BYTES.as_slice()).visit_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
             // just to align the output.
