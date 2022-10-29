@@ -142,7 +142,7 @@ const LOCAL_STATE: [u32; 256] = [
 ];
 
 #[inline]
-fn as_u32(bytes: &[u8]) -> Result<DecryptedBuffer, Error> {
+fn to_u32(bytes: &[u8]) -> Result<DecryptedBuffer, Error> {
     if bytes.len() != SAI_BLOCK_SIZE {
         Err(Error::BadSize)
     } else {

@@ -2,93 +2,74 @@
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
 
-use crate::block::BLOCKS_PER_PAGE;
-use crate::block::{data::DataBlock, table::TableBlock, SAI_BLOCK_SIZE};
+use super::SaiFileSystem;
 use crate::{Inode, InodeType};
 
-pub enum VisitAction {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraverseEvent {
     File,
     FolderStart,
     FolderEnd,
 }
 
-pub struct FileSystemVisitor<'a> {
-    bytes: &'a [u8],
+/// Traverses a SAI file system structure.
+///
+/// If you only want linear search, consider using the `Iterator` trait.
+pub trait SaiFsTraverser {
+    /// Traverses all `Inode`s from `root` inside this `Traverser`.
+    ///
+    /// # Parameters
+    ///
+    /// ## on_traverse
+    ///
+    /// If you want to stop traversing, return `true` from `on_traverse` function.
+    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool);
 }
 
-impl<'a> FileSystemVisitor<'a> {
-    pub fn visit_root(&self, visitor: impl Fn(VisitAction, &Inode) -> bool) {
-        let ref_visitor = &visitor;
-
-        self.visit_inode(2, &visitor)
+impl SaiFsTraverser for SaiFileSystem {
+    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) {
+        traverse_data(self, 2, &on_traverse);
     }
+}
 
-    // FIX: Validation should be probably dealt on the `from()`, or `new()` methods. So I will
-    // unwrap here for the moment.
-    fn visit_inode(&self, index: usize, visitor: &impl Fn(VisitAction, &Inode) -> bool) {
-        let table_index = index & !0x1FF;
+fn traverse_data(
+    fs: &SaiFileSystem,
+    index: usize,
+    on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
+) {
+    let data = fs.read_data(index);
 
-        // FIX: Inefficient
-        let entries = TableBlock::new(block_at(self.bytes, table_index), table_index as u32)
-            .unwrap()
-            .entries;
+    for inode in data.as_inodes() {
+        if inode.flags() == 0 {
+            break;
+        }
 
-        let data_block = DataBlock::new(
-            block_at(self.bytes, index),
-            entries[index % BLOCKS_PER_PAGE].checksum,
-        )
-        .unwrap();
-
-        for inode in data_block.as_inodes() {
-            if inode.flags() == 0 {
-                break;
+        match inode.r#type() {
+            InodeType::File => {
+                if on_traverse(TraverseEvent::File, &inode) {
+                    break;
+                }
             }
+            InodeType::Folder => {
+                if on_traverse(TraverseEvent::FolderStart, &inode) {
+                    break;
+                };
 
-            match inode.r#type() {
-                InodeType::File => {
-                    if visitor(VisitAction::File, &inode) {
-                        break;
-                    }
-                }
-                InodeType::Folder => {
-                    if visitor(VisitAction::FolderStart, &inode) {
-                        break;
-                    };
+                traverse_data(&fs, inode.next_block() as usize, on_traverse);
 
-                    self.visit_inode(inode.next_block() as usize, visitor);
-
-                    if visitor(VisitAction::FolderEnd, &inode) {
-                        break;
-                    };
-                }
+                if on_traverse(TraverseEvent::FolderEnd, &inode) {
+                    break;
+                };
             }
         }
     }
 }
 
-fn block_at(bytes: &[u8], i: usize) -> &[u8] {
-    &bytes[SAI_BLOCK_SIZE * i..SAI_BLOCK_SIZE * (i + 1)]
-}
-
-impl<'a> From<&'a [u8]> for FileSystemVisitor<'a> {
-    fn from(bytes: &'a [u8]) -> Self {
-        assert_eq!(
-            bytes.len() & 0x1FF,
-            0,
-            "the len of bytes should be block aligned (divisable by {}).",
-            SAI_BLOCK_SIZE
-        );
-
-        Self { bytes }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::VisitAction;
+    use super::*;
     use crate::{
         block::data::{Inode, InodeType},
-        fs::visitor::FileSystemVisitor,
         utils::path::read_res,
     };
     use eyre::Result;
@@ -110,14 +91,14 @@ mod tests {
         #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
         impl TreeVisitor {
-            fn visit(&self, action: VisitAction, inode: &Inode) -> bool {
+            fn visit(&self, action: TraverseEvent, inode: &Inode) -> bool {
                 match action {
-                    VisitAction::File => self.add_row(inode),
-                    VisitAction::FolderStart => {
+                    TraverseEvent::File => self.add_row(inode),
+                    TraverseEvent::FolderStart => {
                         self.add_row(inode);
                         self.depth.update(|v| v + 1);
                     }
-                    VisitAction::FolderEnd => {
+                    TraverseEvent::FolderEnd => {
                         self.depth.update(|v| v - 1);
                     }
                 };
@@ -165,7 +146,7 @@ mod tests {
         }
 
         let visitor = TreeVisitor::default();
-        FileSystemVisitor::from(BYTES.as_slice()).visit_root(|a, i| visitor.visit(a, i));
+        SaiFileSystem::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
             // just to align the output.

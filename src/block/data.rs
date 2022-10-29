@@ -85,7 +85,7 @@ pub(crate) struct DataBlock {
 impl DataBlock {
     /// Decrypts a `&[u8]` containing a `DataBlock` structure.
     pub(crate) fn new(bytes: &[u8], table_checksum: u32) -> Result<Self, Error> {
-        let mut data = as_u32(bytes)?;
+        let mut data = to_u32(bytes)?;
         let mut prev_data = table_checksum;
 
         (0..DECRYPTED_BUFFER_SIZE).for_each(|i| {

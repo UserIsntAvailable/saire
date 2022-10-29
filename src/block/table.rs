@@ -14,7 +14,7 @@ pub(crate) struct TableBlock {
 impl TableBlock {
     /// Decrypts a `&[u8]` containing a `TableBlock` structure.
     pub(crate) fn new(bytes: &[u8], index: u32) -> Result<Self, Error> {
-        let mut data = as_u32(bytes)?;
+        let mut data = to_u32(bytes)?;
         let mut prev_data = index & !0x1FF;
 
         (0..DECRYPTED_BUFFER_SIZE).for_each(|i| {
