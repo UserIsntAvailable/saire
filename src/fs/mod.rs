@@ -1,3 +1,5 @@
+pub mod document;
+pub mod reader;
 pub mod traverser;
 
 use crate::block::{data::DataBlock, table::TableBlock, BLOCKS_PER_PAGE, SAI_BLOCK_SIZE};

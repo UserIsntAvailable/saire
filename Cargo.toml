@@ -10,3 +10,6 @@ chrono = "0.4.22"
 eyre = "0.6.8"
 lazy_static = "1.4.0"
 tabular = "0.2.0"
+
+[dependencies]
+png = "0.17.6"
