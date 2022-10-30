@@ -1,19 +1,18 @@
-use crate::block::data::Inode;
-use crate::fs::{
-    reader::InodeReader,
-    traverser::{FsTraverser, TraverseEvent},
-    FileSystemReader,
-};
+#[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
+
+use crate::fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader};
 use std::{
-    cell::Cell,
     fs::File,
     io::{self, BufWriter},
     path::Path,
 };
 
-// TODO: module documentation.
+// TODO: documentation.
 // TODO: serde feature.
+// TODO: should *all* types here have `Sai` prefix?
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,6 +29,7 @@ impl From<io::Error> for Error {
     }
 }
 
+#[cfg(feature = "png")]
 impl From<EncodingError> for Error {
     fn from(err: EncodingError) -> Self {
         match err {
@@ -48,15 +48,17 @@ impl From<EncodingError> for Error {
 // TODO: impl std::error::Error for Error {}
 
 pub struct Thumbnail {
+    /// Width of the `Thumbnail`.
     pub width: u32,
+    /// Height of the `Thumbnail`.
     pub height: u32,
-    // TODO swap to RGBA.
-    /// Pixels in BGRA color type.
+    /// Pixels in RGBA color model.
     pub pixels: Vec<u8>,
 }
 
 impl Thumbnail {
-    pub fn to_png(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+    #[cfg(feature = "png")]
+    pub fn to_png(&self, path: impl AsRef<Path>) -> Result<()> {
         let image = File::create(path)?;
 
         let mut png = Encoder::new(BufWriter::new(image), self.width, self.height);
@@ -70,7 +72,7 @@ impl Thumbnail {
 impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
     type Error = Error;
 
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self, Self::Error> {
+    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
         let width: u32 = unsafe { reader.read_as() };
         let height: u32 = unsafe { reader.read_as() };
         let magic: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
@@ -90,6 +92,10 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
             return Err(Error::Format());
         }
 
+        pixels
+            .chunks_exact_mut(4)
+            .for_each(|chunk| chunk.swap(0, 2));
+
         Ok(Self {
             width,
             height,
@@ -98,82 +104,59 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
     }
 }
 
-// TODO: Move to `lib.rs`.
 pub struct SaiDocument {
     fs: FileSystemReader,
 }
 
-// TODO:
-//
-// Could create a macro to create methods for SaiDocument.
-// The macro will be expanded to a reader with a `into()` on the returned type.
-// It would be something like:
-//
-// document_method!(thumbnail, Thumbnail, ^thumbnail$)
-//
-// 1st param: method name.
-// 2nd param: return type.
-// 3rd param: pattern to check if the file was found.
+// TODO
 //
 // I will need a different macro for aggregated files ( Vec<T> ):
 //
-// document_method!(layers, Vec<Layers>, ^[0-9]+$, layers)
+// doc_folder_method!(layers, Vec<Layers>, layers)
 //
 // where:
 //
-// 4th param: what folder to start checking in.
+// 4th param: what folder to start checking files.
+
+macro_rules! doc_file_method {
+    ($method_name:ident, $return_type:ty, $file_name:literal) => {
+        pub fn $method_name(&self) -> $crate::Result<$return_type> {
+            let inode = self
+                .fs
+                .traverse_root(|_, i| i.name() == $file_name)
+                .expect("root needs to have files");
+
+            let mut reader = InodeReader::new(&self.fs, inode);
+            <$return_type>::try_from(&mut reader)
+        }
+    };
+}
 
 impl SaiDocument {
-    pub fn thumbnail(&self) -> Result<Thumbnail, Error> {
-        // FIX: This is probably one of the most horrible pieces of code I probably ever wrote.
-        //
-        // I need to implement the Iterator trait on `FileSystemReader` ( or into_iter? ). Traverser
-        // has its limitations of not being able to a capture outer variable if using a closure, and
-        // even if you stop earlier, you can't get the last traversed inode; I could return last the
-        // traversed node, but I gonna fix that later.
-        //
-        // Committing this though, because `technically` it works.
-
-        struct ThumbnailTraverser<'a> {
-            fs: &'a FileSystemReader,
-            thumbnail: Cell<Option<Result<Thumbnail, Error>>>,
-        }
-
-        impl<'a> ThumbnailTraverser<'a> {
-            fn new(fs: &'a FileSystemReader) -> Self {
-                Self {
-                    fs,
-                    thumbnail: None.into(),
-                }
-            }
-
-            fn visit(&self, action: TraverseEvent, inode: &Inode) -> bool {
-                if inode.name() == "thumbnail" {
-                    let mut reader = InodeReader::new(&self.fs, inode);
-                    self.thumbnail.set(Some(Thumbnail::try_from(&mut reader)));
-
-                    true
-                } else {
-                    false
-                }
-            }
-
-            pub fn thumbnail(&self) -> Result<Thumbnail, Error> {
-                let thumbnail = self.thumbnail.take();
-
-                if thumbnail.is_none() {
-                    todo!();
-                } else {
-                    thumbnail.unwrap()
-                }
-            }
-        }
-
-        let traverser = ThumbnailTraverser::new(&self.fs);
-        self.fs.traverse_root(|a, n| traverser.visit(a, n));
-
-        traverser.thumbnail()
+    // TODO: Make public when FileSystemReader implements `try_from`.
+    fn new(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self {
+            fs: FileSystemReader::new(File::open(path)?),
+        })
     }
+
+    /// Creates a `SaiDocument` without checking if the file is valid.
+    ///
+    /// Basically don't use unless you are 100% that the SAI file is valid. If the SAI .exe can
+    /// open it, then it is safe to use this method.
+    ///
+    /// # Panics
+    ///
+    /// - The file could not be read.
+    ///
+    /// - Corrupted/Invalid SAI file.
+    pub fn new_unchecked(path: impl AsRef<Path>) -> Self {
+        Self {
+            fs: FileSystemReader::new_unchecked(File::open(path).unwrap()),
+        }
+    }
+
+    doc_file_method!(thumbnail, Thumbnail, "thumbnail");
 }
 
 impl From<&[u8]> for SaiDocument {

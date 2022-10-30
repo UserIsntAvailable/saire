@@ -17,7 +17,7 @@ pub(crate) struct InodeReader<'a> {
 }
 
 impl<'a> InodeReader<'a> {
-    pub(crate) fn new(fs: &'a FileSystemReader, inode: &'a Inode) -> Self {
+    pub(crate) fn new(fs: &'a FileSystemReader, inode: Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
 
         Self {
@@ -34,7 +34,7 @@ impl<'a> InodeReader<'a> {
         let mut missing_bytes = buffer.len();
         let mut buf_writer = BufWriter::new(buffer);
 
-        // TODO: Better variables.
+        // TODO: Better variable names.
         // FIX: this issue is still prevalent ( https://github.com/Wunkolo/libsai/issues/6 )
         //
         // It should be eassy to fix?

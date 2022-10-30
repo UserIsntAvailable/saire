@@ -6,15 +6,14 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     convert::AsRef,
-    io::{self, BufReader, Cursor, Read, Seek},
+    io::{self, BufReader, Cursor, Read, Seek}, fs::File,
 };
 
 pub(crate) trait ReadSeek: Read + Seek {}
 
+impl ReadSeek for File {}
 impl<T> ReadSeek for Cursor<T> where T: AsRef<[u8]> {}
 
-/// TODO
-///
 /// # Interior Mutability
 ///
 /// All fields on `FileSystemReader` are wrapped on `Cell` like types.
@@ -39,6 +38,7 @@ pub(crate) struct FileSystemReader {
 }
 
 impl FileSystemReader {
+    /// Creates a `FileSystemReader` first checking if all `SaiBlock`s inside have valid checksums.
     pub(crate) fn new(reader: impl ReadSeek + 'static) -> Self {
         Self::new_unchecked(reader);
 
@@ -60,7 +60,7 @@ impl FileSystemReader {
         assert_eq!(
             reader.stream_len().unwrap() & 0x1FF,
             0,
-            "the reader bytes are not be block aligned.",
+            "the reader's bytes are not be block aligned.",
         );
 
         Self {
@@ -142,11 +142,17 @@ impl FileSystemReader {
     }
 }
 
-// TODO: impl `TryFrom`s.
+// TODO: impl `TryFrom`.
 
 impl From<&[u8]> for FileSystemReader {
     fn from(bytes: &[u8]) -> Self {
-        let cursor = Cursor::new(bytes.to_owned());
+        bytes.to_owned().into()
+    }
+}
+
+impl From<Vec<u8>> for FileSystemReader {
+    fn from(bytes: Vec<u8>) -> Self {
+        let cursor = Cursor::new(bytes);
 
         Self::new_unchecked(cursor)
     }

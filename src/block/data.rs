@@ -1,14 +1,14 @@
 use super::*;
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum InodeType {
     Folder = 0x10,
     File = 0x80,
 }
 
 #[repr(C)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct Inode {
     flags: u32,
     name: [std::ffi::c_uchar; 32],
@@ -53,20 +53,28 @@ impl Inode {
         &str[str.find('.').unwrap_or_default()..str.find('\0').unwrap()]
     }
 
-    // FIX: Better name?.
-    /// The type of the inode.
+    /// Whether the `Inode` is `InodeType::File` or `InodeType::Folder`
     pub(crate) fn r#type(&self) -> &InodeType {
         &self.r#type
     }
 
-    /// The next `DataBlock` index where the next inodes for this inode are located. Only set if
-    /// `self.r#type == InodeType::Folder`.
+    /// The next `DataBlock` index to look for.
+    ///
+    /// Depending on the `type()` of this node it will mean something different:
+    ///
+    /// ## InodeType::Folder
+    ///
+    /// `DataBlock.as_inodes()` containing the childs/files for this folder.
+    ///
+    /// ## InodeType::File
+    ///
+    /// Where the bytes for this file are.
     pub(crate) fn next_block(&self) -> u32 {
         self.next_block
     }
 
-    /// The amount of contiguous bytes to read from the current `DataBlock` to get the entry
-    /// contents. Only set if `self.r#type == InodeType::File`.
+    /// The amount of contiguous bytes to read from `next_block()` index to get the file contents.
+    /// Only used if `self.r#type == InodeType::File`.
     pub(crate) fn size(&self) -> u32 {
         self.size
     }

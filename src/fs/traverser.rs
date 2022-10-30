@@ -14,27 +14,26 @@ pub(crate) enum TraverseEvent {
 
 /// Traverses a SAI file system structure.
 pub(crate) trait FsTraverser {
-    /// Traverses all `Inode`s from `root` inside this `Traverser`.
+    /// Traverses all `Inode`s from `root` inside this `Traverser`
     ///
-    /// # Parameters
+    /// # Usage
     ///
-    /// ## on_traverse
-    ///
-    /// If you want to stop traversing, return `true` from `on_traverse` function.
-    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool);
+    /// If `on_traverse` returns `true`, then the return value will be `Some` of the last traversed
+    /// inode, otherwise `None`.
+    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) -> Option<Inode>;
 }
 
 impl FsTraverser for FileSystemReader {
-    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) {
-        traverse_data(self, 2, &on_traverse);
+    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) -> Option<Inode> {
+        traverse_data(self, 2, &on_traverse)
     }
 }
 
-fn traverse_data(
-    fs: &FileSystemReader,
+fn traverse_data<'a>(
+    fs: &'a FileSystemReader,
     index: usize,
     on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
-) {
+) -> Option<Inode> {
     let data = fs.read_data(index);
 
     for inode in data.as_inodes() {
@@ -45,22 +44,24 @@ fn traverse_data(
         match inode.r#type() {
             InodeType::File => {
                 if on_traverse(TraverseEvent::File, &inode) {
-                    break;
+                    return Some(inode.to_owned());
                 }
             }
             InodeType::Folder => {
                 if on_traverse(TraverseEvent::FolderStart, &inode) {
-                    break;
+                    return Some(inode.to_owned());
                 };
 
                 traverse_data(&fs, inode.next_block() as usize, on_traverse);
 
                 if on_traverse(TraverseEvent::FolderEnd, &inode) {
-                    break;
+                    return Some(inode.to_owned());
                 };
             }
         }
     }
+
+    None
 }
 
 #[cfg(test)]
@@ -84,8 +85,7 @@ mod tests {
     }
 
     #[test]
-    // Cool tree view of the `FileSystemReader`. Keeping it here to make sure the file is being
-    // read correctly :).
+    // Cool tree view of the underlying sai file system. Keeping it here to make sure the file is being read correctly :).
     fn traverser_works() -> Result<()> {
         #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
@@ -160,5 +160,16 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn traverser_returns_stopped_inode() {
+        const EXPECTED: &str = "canvas";
+
+        let actual =
+            FileSystemReader::from(BYTES.as_slice()).traverse_root(|_, i| i.name() == EXPECTED);
+
+        assert!(actual.is_some());
+        assert_eq!(actual.unwrap().name(), EXPECTED);
     }
 }
