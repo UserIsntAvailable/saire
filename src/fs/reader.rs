@@ -1,23 +1,23 @@
-use super::SaiFileSystem;
-use crate::{
-    block::{data::DataBlock, SAI_BLOCK_SIZE},
-    Inode, InodeType,
+use super::FileSystemReader;
+use crate::block::{
+    data::{DataBlock, Inode, InodeType},
+    SAI_BLOCK_SIZE,
 };
 use std::{
     io::{BufWriter, Write},
     mem::size_of,
 };
 
-/// Reads file like files from a `SaiFileSystem`. i.e: .xxxxxxxxxxxxxxxx, canvas, or thumbnail.
-pub(crate) struct SaiFileReader<'a> {
+/// Reads file like files from a `FileSystemReader`. i.e: .xxxxxxxxxxxxxxxx, canvas, or thumbnail.
+pub(crate) struct InodeReader<'a> {
     data: Option<DataBlock>,
-    fs: &'a SaiFileSystem,
+    fs: &'a FileSystemReader,
     next_block: usize,
     position: usize,
 }
 
-impl<'a> SaiFileReader<'a> {
-    pub(crate) fn new(fs: &'a SaiFileSystem, inode: &'a Inode) -> Self {
+impl<'a> InodeReader<'a> {
+    pub(crate) fn new(fs: &'a FileSystemReader, inode: &'a Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
 
         Self {

@@ -2,14 +2,14 @@ use super::*;
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq)]
-pub enum InodeType {
+pub(crate) enum InodeType {
     Folder = 0x10,
     File = 0x80,
 }
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
-pub struct Inode {
+pub(crate) struct Inode {
     flags: u32,
     name: [std::ffi::c_uchar; 32],
     /// Always `0`.
@@ -29,12 +29,12 @@ pub struct Inode {
 
 impl Inode {
     /// If `0` the inode is considered unused.
-    pub fn flags(&self) -> u32 {
+    pub(crate) fn flags(&self) -> u32 {
         self.flags
     }
 
     /// The name of the inode.
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         let name = self.name.as_ptr();
         // SAFETY: `name` is a valid pointer.
         //
@@ -55,24 +55,24 @@ impl Inode {
 
     // FIX: Better name?.
     /// The type of the inode.
-    pub fn r#type(&self) -> &InodeType {
+    pub(crate) fn r#type(&self) -> &InodeType {
         &self.r#type
     }
 
     /// The next `DataBlock` index where the next inodes for this inode are located. Only set if
     /// `self.r#type == InodeType::Folder`.
-    pub fn next_block(&self) -> u32 {
+    pub(crate) fn next_block(&self) -> u32 {
         self.next_block
     }
 
     /// The amount of contiguous bytes to read from the current `DataBlock` to get the entry
     /// contents. Only set if `self.r#type == InodeType::File`.
-    pub fn size(&self) -> u32 {
+    pub(crate) fn size(&self) -> u32 {
         self.size
     }
 
     /// The amount of seconds passed since `January 1, 1970` ( epoch ).
-    pub fn timestamp(&self) -> u64 {
+    pub(crate) fn timestamp(&self) -> u64 {
         self.timestamp / 10000000 - 11644473600
     }
 }

@@ -6,7 +6,7 @@ use self::table::TableEntry;
 use std::{fmt::Display, mem::size_of};
 
 #[derive(Debug)]
-pub enum Error {
+pub(crate) enum Error {
     BadSize,
     BadChecksum { actual: u32, expected: u32 },
 }
@@ -176,11 +176,8 @@ fn checksum(data: DecryptedBuffer) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        block::{data::DataBlock, table::TableBlock, SAI_BLOCK_SIZE},
-        utils::path::read_res,
-        InodeType,
-    };
+    use super::{data::*, table::*, *};
+    use crate::utils::path::read_res;
     use eyre::Result;
     use lazy_static::lazy_static;
     use std::fs::read;

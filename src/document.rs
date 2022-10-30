@@ -1,7 +1,8 @@
-use super::{traverser::SaiFsTraverser, SaiFileSystem};
-use crate::{
-    fs::{reader::SaiFileReader, traverser::TraverseEvent},
-    Inode,
+use crate::block::data::Inode;
+use crate::fs::{
+    reader::InodeReader,
+    traverser::{FsTraverser, TraverseEvent},
+    FileSystemReader,
 };
 use png::{Encoder, EncodingError};
 use std::{
@@ -66,10 +67,10 @@ impl Thumbnail {
     }
 }
 
-impl TryFrom<&mut SaiFileReader<'_>> for Thumbnail {
+impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
     type Error = Error;
 
-    fn try_from(reader: &mut SaiFileReader<'_>) -> Result<Self, Self::Error> {
+    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self, Self::Error> {
         let width: u32 = unsafe { reader.read_as() };
         let height: u32 = unsafe { reader.read_as() };
         let magic: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
@@ -97,23 +98,25 @@ impl TryFrom<&mut SaiFileReader<'_>> for Thumbnail {
     }
 }
 
+// TODO: Move to `lib.rs`.
 pub struct SaiDocument {
-    fs: SaiFileSystem,
+    fs: FileSystemReader,
 }
 
 // TODO:
 //
 // Could create a macro to create methods for SaiDocument.
-// The macro will be expanded to a reader with a `into()` the returned type.
+// The macro will be expanded to a reader with a `into()` on the returned type.
 // It would be something like:
 //
-// document_method!(thumbnail, SaiThumbnail, ^thumbnail$)
+// document_method!(thumbnail, Thumbnail, ^thumbnail$)
 //
 // 1st param: method name.
 // 2nd param: return type.
 // 3rd param: pattern to check if the file was found.
 //
 // I will need a different macro for aggregated files ( Vec<T> ):
+//
 // document_method!(layers, Vec<Layers>, ^[0-9]+$, layers)
 //
 // where:
@@ -124,20 +127,20 @@ impl SaiDocument {
     pub fn thumbnail(&self) -> Result<Thumbnail, Error> {
         // FIX: This is probably one of the most horrible pieces of code I probably ever wrote.
         //
-        // I need to implement the Iterator trait on `SaiFileSystem` ( or into_iter? ). Traverser
-        // has its limitations of not being able to capture outer variable if using a closure, and
-        // even if you stop earlier, but you can't get the last inode; I could return last the
+        // I need to implement the Iterator trait on `FileSystemReader` ( or into_iter? ). Traverser
+        // has its limitations of not being able to a capture outer variable if using a closure, and
+        // even if you stop earlier, you can't get the last traversed inode; I could return last the
         // traversed node, but I gonna fix that later.
         //
         // Committing this though, because `technically` it works.
 
         struct ThumbnailTraverser<'a> {
-            fs: &'a SaiFileSystem,
+            fs: &'a FileSystemReader,
             thumbnail: Cell<Option<Result<Thumbnail, Error>>>,
         }
 
         impl<'a> ThumbnailTraverser<'a> {
-            fn new(fs: &'a SaiFileSystem) -> Self {
+            fn new(fs: &'a FileSystemReader) -> Self {
                 Self {
                     fs,
                     thumbnail: None.into(),
@@ -146,7 +149,7 @@ impl SaiDocument {
 
             fn visit(&self, action: TraverseEvent, inode: &Inode) -> bool {
                 if inode.name() == "thumbnail" {
-                    let mut reader = SaiFileReader::new(&self.fs, inode);
+                    let mut reader = InodeReader::new(&self.fs, inode);
                     self.thumbnail.set(Some(Thumbnail::try_from(&mut reader)));
 
                     true

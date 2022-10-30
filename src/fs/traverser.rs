@@ -2,20 +2,18 @@
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
 
-use super::SaiFileSystem;
-use crate::{Inode, InodeType};
+use super::FileSystemReader;
+use crate::block::data::{Inode, InodeType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TraverseEvent {
+pub(crate) enum TraverseEvent {
     File,
     FolderStart,
     FolderEnd,
 }
 
 /// Traverses a SAI file system structure.
-///
-/// If you only want linear search, consider using the `Iterator` trait.
-pub trait SaiFsTraverser {
+pub(crate) trait FsTraverser {
     /// Traverses all `Inode`s from `root` inside this `Traverser`.
     ///
     /// # Parameters
@@ -26,14 +24,14 @@ pub trait SaiFsTraverser {
     fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool);
 }
 
-impl SaiFsTraverser for SaiFileSystem {
+impl FsTraverser for FileSystemReader {
     fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) {
         traverse_data(self, 2, &on_traverse);
     }
 }
 
 fn traverse_data(
-    fs: &SaiFileSystem,
+    fs: &FileSystemReader,
     index: usize,
     on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
 ) {
@@ -86,8 +84,9 @@ mod tests {
     }
 
     #[test]
-    // TODO: I might provide this as an public API later.
-    fn tree_view() -> Result<()> {
+    // Cool tree view of the `FileSystemReader`. Keeping it here to make sure the file is being
+    // read correctly :).
+    fn traverser_works() -> Result<()> {
         #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
         impl TreeVisitor {
@@ -146,10 +145,9 @@ mod tests {
         }
 
         let visitor = TreeVisitor::default();
-        SaiFileSystem::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
+        FileSystemReader::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
-            // just to align the output.
             format!("\n{}", visitor),
             r#"
      32 f 2019-09-03 .73851dcd1203b24d

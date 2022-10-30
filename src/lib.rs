@@ -8,13 +8,11 @@
     seek_stream_len
 )]
 
-pub mod block;
-pub mod fs;
+pub use document::*;
 
+pub(crate) mod block;
+pub(crate) mod fs;
 pub(crate) mod utils;
-
-pub use crate::block::data::Inode;
-pub use crate::block::data::InodeType;
+pub(crate) mod document;
 
 // TODO: `simd` feature.
-// TODO: Remove the `Sai` prefix from structs/enums?

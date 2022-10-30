@@ -1,6 +1,5 @@
-pub mod document;
-pub mod reader;
-pub mod traverser;
+pub(crate) mod reader;
+pub(crate) mod traverser;
 
 use crate::block::{data::DataBlock, table::TableBlock, BLOCKS_PER_PAGE, SAI_BLOCK_SIZE};
 use std::{
@@ -10,18 +9,15 @@ use std::{
     io::{self, BufReader, Cursor, Read, Seek},
 };
 
-pub trait ReadSeek: Read + Seek {}
+pub(crate) trait ReadSeek: Read + Seek {}
 
 impl<T> ReadSeek for Cursor<T> where T: AsRef<[u8]> {}
-
-// TODO: impl `Iterator`.
-// TODO: impl `Display`.
 
 /// TODO
 ///
 /// # Interior Mutability
 ///
-/// All fields on `SaiFileSystem` are wrapped on `Cell` like types.
+/// All fields on `FileSystemReader` are wrapped on `Cell` like types.
 ///
 /// The major reason for that is, because I don't want to force the API to have &mut everywhere; If
 /// later on I want to make this type `thread-safe` it will be easier to do so. However, for now
@@ -29,9 +25,9 @@ impl<T> ReadSeek for Cursor<T> where T: AsRef<[u8]> {}
 /// `seek` a stream between multiple threads without using something like a `Mutex`, but that would
 /// be counter-productive tbh.
 ///
-/// With that restriction, that means that anything having a `SaiFileSystem` in it will not be
+/// With that restriction, that means that anything having a `FileSystemReader` in it will not be
 /// `Sync`.
-pub struct SaiFileSystem {
+pub(crate) struct FileSystemReader {
     /// The reader holding the encrypted SAI file bytes.
     buff: RefCell<BufReader<Box<dyn ReadSeek>>>,
 
@@ -42,14 +38,14 @@ pub struct SaiFileSystem {
     table: RefCell<HashMap<usize, TableBlock>>,
 }
 
-impl SaiFileSystem {
-    pub fn new(reader: impl ReadSeek + 'static) -> Self {
+impl FileSystemReader {
+    pub(crate) fn new(reader: impl ReadSeek + 'static) -> Self {
         Self::new_unchecked(reader);
 
         todo!("verify blocks")
     }
 
-    /// Creates a `SaiFileSystem` without checking if all `SaiBlock`s inside are indeed valid.
+    /// Creates a `FileSystemReader` without checking if all `SaiBlock`s inside are indeed valid.
     ///
     /// The method still will check if `reader.stream_len()` is block aligned.
     ///
@@ -58,9 +54,9 @@ impl SaiFileSystem {
     /// If the reader is not block aligned ( not divisable by 4096; all sai blocks should be 4096 ),
     /// then the function will panic.
     ///
-    /// If at any moment, the `SaiFileSystem` encounters an invalid `SaiBlock` then the function
+    /// If at any moment, the `FileSystemReader` encounters an invalid `SaiBlock` then the function
     /// will panic with `sai file is corrupted`.
-    pub fn new_unchecked(mut reader: impl ReadSeek + 'static) -> Self {
+    pub(crate) fn new_unchecked(mut reader: impl ReadSeek + 'static) -> Self {
         assert_eq!(
             reader.stream_len().unwrap() & 0x1FF,
             0,
@@ -98,7 +94,7 @@ impl SaiFileSystem {
     // That should increase the performance of the reader as a whole ( concurrent reads will be
     // posible ), but with the drawback of high memory usage, and some API changes.
     //
-    // Before implementing all of that, I want to finish the v.0.1.0 to see if there is a *big*
+    // Before implementing all of that, I want to finish the v.0.2.0 to see if there is a *big*
     // advantage of doing that.
 
     /// Relative seek from `self.offset` to `amount` of bytes.
@@ -148,15 +144,9 @@ impl SaiFileSystem {
 
 // TODO: impl `TryFrom`s.
 
-impl From<&[u8]> for SaiFileSystem {
+impl From<&[u8]> for FileSystemReader {
     fn from(bytes: &[u8]) -> Self {
-        bytes.to_owned().into()
-    }
-}
-
-impl From<Vec<u8>> for SaiFileSystem {
-    fn from(bytes: Vec<u8>) -> Self {
-        let cursor = Cursor::new(bytes);
+        let cursor = Cursor::new(bytes.to_owned());
 
         Self::new_unchecked(cursor)
     }
