@@ -1,7 +1,10 @@
 #[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
 
-use crate::fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader};
+use crate::{
+    fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
+    utils,
+};
 use std::{
     fs::File,
     io::{self, BufWriter},
@@ -47,6 +50,56 @@ impl From<EncodingError> for Error {
 
 // TODO: impl std::error::Error for Error {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Author {
+    /// The epoch timestamp of when the sai file was created.
+    pub date_created: u64,
+    /// The epoch timestamp of the sai file last modification.
+    pub date_modified: u64,
+    /// The hash of the machine of the user that created this sai file.
+    ///
+    /// This is not that important, but it could be used as an author `id`, as long as the user
+    /// that created the file didn't change their machine.
+    ///
+    /// If you are interesting how this hash was created, you can give a look to the `libsai`
+    /// documentation here: <https://github.com/Wunkolo/libsai#xxxxxxxxxxxxxxxx>.
+    pub machine_hash: String,
+}
+
+impl TryFrom<&mut InodeReader<'_>> for Author {
+    type Error = Error;
+
+    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+        // On libsai it says that it is always `0x08000000`, but in the files that I tested it is
+        // always `0x80000000`; it probably is a typo. However, my test file has 2147483685 which is
+        // weird gonna ignore for now, the rest of the information is fine.
+        let bitflag: u32 = unsafe { reader.read_as() };
+
+        // if bitflag != 0x80000000 {
+        //     // TODO:
+        //     return Err(Error::Format());
+        // }
+
+        let _: u32 = unsafe { reader.read_as() };
+
+        let mut read_date = || -> u64 {
+            let date: u64 = unsafe { reader.read_as() };
+            // For some reason, here it uses `seconds` since `January 1, 1601`; gotta love the
+            // consistency.
+            let filetime = date * 10000000;
+
+            utils::time::to_epoch(filetime)
+        };
+
+        Ok(Self {
+            date_created: read_date(),
+            date_modified: read_date(),
+            machine_hash: format!("{:x}", unsafe { reader.read_as::<u64>() }),
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumbnail {
     /// Width of the `Thumbnail`.
     pub width: u32,
@@ -117,13 +170,18 @@ pub struct SaiDocument {
 // where:
 //
 // 4th param: what folder to start checking files.
+//
+// ------------------------------------------------------------
+//
+// Sadly, you can't just put /// inside the macro call to put documentation on the function. I
+// guess I could pass the documentation as a parameter, but that will be kinda ugly...
 
 macro_rules! doc_file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let inode = self
                 .fs
-                .traverse_root(|_, i| i.name() == $file_name)
+                .traverse_root(|_, i| i.name().contains($file_name))
                 .expect("root needs to have files");
 
             let mut reader = InodeReader::new(&self.fs, inode);
@@ -142,8 +200,8 @@ impl SaiDocument {
 
     /// Creates a `SaiDocument` without checking if the file is valid.
     ///
-    /// Basically don't use unless you are 100% that the SAI file is valid. If the SAI .exe can
-    /// open it, then it is safe to use this method.
+    /// Basically, don't use unless you are 100% that the SAI file is valid. If the SAI .exe can
+    /// open it, then probably it is safe to use this method.
     ///
     /// # Panics
     ///
@@ -156,6 +214,7 @@ impl SaiDocument {
         }
     }
 
+    doc_file_method!(author, Author, ".");
     doc_file_method!(thumbnail, Thumbnail, "thumbnail");
 }
 
@@ -167,7 +226,7 @@ impl From<&[u8]> for SaiDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::SaiDocument;
+    use super::*;
     use crate::utils::path::read_res;
     use lazy_static::lazy_static;
     use std::fs::read;
@@ -177,13 +236,31 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_works() {
+    fn author_works() -> Result<()> {
         let doc = SaiDocument::from(BYTES.as_slice());
+        let author = doc.author().unwrap();
 
+        assert_eq!(author.date_created, 1566984405);
+        assert_eq!(author.date_modified, 1567531929);
+        assert_eq!(author.machine_hash, "73851dcd1203b24d");
+
+        Ok(())
+    }
+
+    #[test]
+    fn thumbnail_works() -> Result<()> {
         // FIX: Revisit the output of `read()` for `thumbnail`.
         //
         // It is not producing the same output of libsai, which doesn't convince me that my
         // method is good at all. The thumbnails are really similar though.
-        assert!(doc.thumbnail().is_ok());
+
+        let doc = SaiDocument::from(BYTES.as_slice());
+        let thumbnail = doc.thumbnail()?;
+
+        assert_eq!(thumbnail.width, 140);
+        assert_eq!(thumbnail.height, 140);
+        assert_eq!(thumbnail.pixels.len(), 78400);
+
+        Ok(())
     }
 }

@@ -1,3 +1,5 @@
+use crate::utils;
+
 use super::*;
 
 #[repr(u8)]
@@ -81,7 +83,7 @@ impl Inode {
 
     /// The amount of seconds passed since `January 1, 1970` ( epoch ).
     pub(crate) fn timestamp(&self) -> u64 {
-        self.timestamp / 10000000 - 11644473600
+        utils::time::to_epoch(self.timestamp)
     }
 }
 
