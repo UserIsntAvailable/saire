@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_variables)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
+#![deny(unsafe_op_in_unsafe_fn)]
 #![feature(
     array_methods,
     cell_update,
@@ -11,8 +12,8 @@
 pub use document::*;
 
 pub(crate) mod block;
+pub(crate) mod document;
 pub(crate) mod fs;
 pub(crate) mod utils;
-pub(crate) mod document;
 
 // TODO: `simd` feature.

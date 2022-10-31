@@ -72,7 +72,7 @@ impl TryFrom<&mut InodeReader<'_>> for Author {
     fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
         // On libsai it says that it is always `0x08000000`, but in the files that I tested it is
         // always `0x80000000`; it probably is a typo. However, my test file has 2147483685 which is
-        // weird gonna ignore for now, the rest of the information is fine.
+        // weird; gonna ignore for now, the rest of the information is fine.
         let bitflag: u32 = unsafe { reader.read_as() };
 
         // if bitflag != 0x80000000 {
@@ -95,6 +95,95 @@ impl TryFrom<&mut InodeReader<'_>> for Author {
             date_created: read_date(),
             date_modified: read_date(),
             machine_hash: format!("{:x}", unsafe { reader.read_as::<u64>() }),
+        })
+    }
+}
+
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeUnit {
+    Pixels,
+    Inch,
+    Centimeters,
+    Milimeters,
+}
+
+#[repr(u16)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResolutionUnit {
+    /// pixels/inch
+    PixelsInch,
+    /// pixels/cm
+    PixelsCm,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Canvas {
+    /// Always 0x10(16), possibly bpc or alignment
+    pub alignment: u32,
+    /// Width of the `Canvas`.
+    pub width: u32,
+    /// Height of the `Canvas`.
+    pub height: u32,
+
+    // Decided to make the `stream` data `Option`s, because I'm not really sure if they need to be
+    // present all the time.
+    //
+    pub dots_per_inch: Option<f32>,
+    pub size_unit: Option<SizeUnit>,
+    pub resolution_unit: Option<ResolutionUnit>,
+    /// ID of layer marked as the selection source.
+    pub selection_source: Option<u32>,
+    /// ID of the current selected layer.
+    pub selected_layer: Option<u32>,
+}
+
+impl TryFrom<&mut InodeReader<'_>> for Canvas {
+    type Error = Error;
+
+    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+        let aligment: u32 = unsafe { reader.read_as() };
+
+        if aligment != 16 {
+            // TODO:
+            return Err(Error::Format());
+        }
+
+        let width: u32 = unsafe { reader.read_as() };
+        let height: u32 = unsafe { reader.read_as() };
+
+        let mut dots_per_inch: Option<f32> = None;
+        let mut size_unit: Option<SizeUnit> = None;
+        let mut resolution_unit: Option<ResolutionUnit> = None;
+        let mut selection_source: Option<u32> = None;
+        let mut selected_layer: Option<u32> = None;
+
+        while let Some((tag, size)) = unsafe { reader.read_stream_header() } {
+            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII more specifically ).
+            match unsafe { std::str::from_utf8_unchecked(&tag) } {
+                "reso" => {
+                    // Conversion from 16.16 fixed point integer to a float.
+                    dots_per_inch = Some(unsafe { reader.read_as::<u32>() } as f32 / 65536f32);
+                    size_unit = Some(unsafe { reader.read_as::<SizeUnit>() });
+                    resolution_unit = Some(unsafe { reader.read_as::<ResolutionUnit>() });
+                }
+                "wsrc" => selection_source = Some(unsafe { reader.read_as::<u32>() }),
+                "layr" => selected_layer = Some(unsafe { reader.read_as::<u32>() }),
+                _ => {
+                    reader.read(&mut vec![0; size as usize]);
+                }
+            }
+        }
+
+        Ok(Self {
+            alignment: aligment,
+            width,
+            height,
+            dots_per_inch,
+            size_unit,
+            resolution_unit,
+            selection_source,
+            selected_layer,
         })
     }
 }
@@ -173,8 +262,8 @@ pub struct SaiDocument {
 //
 // ------------------------------------------------------------
 //
-// Sadly, you can't just put /// inside the macro call to put documentation on the function. I
-// guess I could pass the documentation as a parameter, but that will be kinda ugly...
+// Sadly, you can't just put /// on top of the macro call to set documentation on the function. I
+// guess I could pass the documentation as a parameter on the macro, but that will be kinda ugly...
 
 macro_rules! doc_file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
@@ -215,6 +304,7 @@ impl SaiDocument {
     }
 
     doc_file_method!(author, Author, ".");
+    doc_file_method!(canvas, Canvas, "canvas");
     doc_file_method!(thumbnail, Thumbnail, "thumbnail");
 }
 
@@ -238,11 +328,28 @@ mod tests {
     #[test]
     fn author_works() -> Result<()> {
         let doc = SaiDocument::from(BYTES.as_slice());
-        let author = doc.author().unwrap();
+        let author = doc.author()?;
 
         assert_eq!(author.date_created, 1566984405);
         assert_eq!(author.date_modified, 1567531929);
         assert_eq!(author.machine_hash, "73851dcd1203b24d");
+
+        Ok(())
+    }
+
+    #[test]
+    fn canvas_works() -> Result<()> {
+        let doc = SaiDocument::from(BYTES.as_slice());
+        let author = doc.canvas()?;
+
+        assert_eq!(author.alignment, 16);
+        assert_eq!(author.width, 2250);
+        assert_eq!(author.height, 2250);
+        assert_eq!(author.dots_per_inch.unwrap(), 72.0);
+        assert_eq!(author.size_unit.unwrap(), SizeUnit::Pixels);
+        assert_eq!(author.resolution_unit.unwrap(), ResolutionUnit::PixelsInch);
+        assert!(author.selection_source.is_none());
+        assert_eq!(author.selected_layer.unwrap(), 2);
 
         Ok(())
     }

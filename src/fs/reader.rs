@@ -1,7 +1,7 @@
 use super::FileSystemReader;
 use crate::block::{
     data::{DataBlock, Inode, InodeType},
-    SAI_BLOCK_SIZE,
+    BLOCKS_PER_PAGE, SAI_BLOCK_SIZE,
 };
 use std::{
     io::{BufWriter, Write},
@@ -19,6 +19,7 @@ pub(crate) struct InodeReader<'a> {
 impl<'a> InodeReader<'a> {
     pub(crate) fn new(fs: &'a FileSystemReader, inode: Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
+        debug_assert!(inode.next_block() % 512 != 0, "It seems that an `Inode` can point to a `TableBlock`.");
 
         Self {
             fs,
@@ -31,17 +32,14 @@ impl<'a> InodeReader<'a> {
     /// TODO
     pub(crate) fn read(&mut self, buffer: &mut [u8]) -> usize {
         let buf_len = buffer.len();
-        let mut missing_bytes = buffer.len();
+        let mut bytes_left = buffer.len();
         let mut buf_writer = BufWriter::new(buffer);
 
         // TODO: Better variable names.
-        // FIX: this issue is still prevalent ( https://github.com/Wunkolo/libsai/issues/6 )
-        //
-        // It should be eassy to fix?
         loop {
             if let Some(data) = &self.data {
                 let bytes = data.as_bytes();
-                let bytes_to_read = missing_bytes + self.position;
+                let bytes_to_read = bytes_left + self.position;
 
                 if bytes_to_read >= SAI_BLOCK_SIZE {
                     let seek_fw = SAI_BLOCK_SIZE - self.position;
@@ -49,23 +47,39 @@ impl<'a> InodeReader<'a> {
 
                     self.data = None;
                     self.position = 0;
-                    missing_bytes -= seek_fw;
+                    bytes_left -= seek_fw;
                 } else {
                     let seek_fw = bytes_to_read;
                     buf_writer.write(&bytes[self.position..seek_fw]).unwrap();
 
                     self.position += buf_len;
-                    missing_bytes = 0;
+                    bytes_left = 0;
 
                     break;
                 };
             } else {
+                // There is `debug_assert()` on `new()` that will prevent an `Inode` to point to a
+                // `TableBlock` from its `next_block()` index.
+                //
+                // If that ever happens it should be an easy fix (inverse the if here, and do
+                // next_block() -1 on `new()` ).
+                //
+                // I could make the change now to be safe, but I actually want to know if it could
+                // happen.
                 self.data = Some(self.fs.read_data(self.next_block));
-                self.next_block += 1;
+
+                // The stream might intercept a `TableBlock` while reading the stream.
+                // If that happens then we ignore it.
+                // And go to the next `block` which is guaranteed to be a `DataBlock`.
+                self.next_block += if self.next_block % BLOCKS_PER_PAGE == 0 {
+                    2
+                } else {
+                    1
+                };
             };
         }
 
-        buf_len - missing_bytes
+        buf_len - bytes_left
     }
 
     /// Reads `size_of::<T>()` bytes, and returns the value.
@@ -89,6 +103,19 @@ impl<'a> InodeReader<'a> {
             panic!("Can't convert to `T`; Not enough bytes on the reader.");
         }
 
-        *(buffer.as_ptr() as *const T)
+        unsafe { *(buffer.as_ptr() as *const T) }
+    }
+
+    pub(crate) unsafe fn read_stream_header(&mut self) -> Option<([std::ffi::c_uchar; 4], u32)> {
+        let mut tag: [std::ffi::c_uchar; 4] = unsafe { self.read_as() };
+
+        if tag == [0, 0, 0, 0] {
+            None
+        } else {
+            tag.reverse();
+            let size: u32 = unsafe { self.read_as() };
+
+            Some((tag, size))
+        }
     }
 }
