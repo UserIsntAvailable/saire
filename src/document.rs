@@ -2,7 +2,7 @@
 use png::{Encoder, EncodingError};
 
 use crate::{
-    block::{data::DataBlock, data::Inode, SAI_BLOCK_SIZE},
+    block::{data::Inode, SAI_BLOCK_SIZE},
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
@@ -80,7 +80,7 @@ impl TryFrom<&mut InodeReader<'_>> for Author {
 
     fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
         // On libsai it says that it is always `0x08000000`, but in the files that I tested it is
-        // always `0x80000000`; it probably is a typo. However, my test file has 2147483685 which is
+        // always `0x80000000`; it probably is a typo. However, my test file has 0x80000025 which is
         // weird; gonna ignore for now, the rest of the information is fine.
         let bitflag: u32 = unsafe { reader.read_as() };
 
@@ -628,25 +628,17 @@ macro_rules! file_read_method {
 macro_rules! folder_read_method {
     ($method_name:ident, $return_type:ty, $folder_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<Vec<$return_type>> {
-            // FIX: The `read_data` is quite annoying to work with, because it forces you to do
-            // this weird looking `loop`s. I need to find a more "idiomatic" ( whatever that means
-            // ) way to do this.
-
-            let mut blocks: Vec<DataBlock> = Vec::new();
-            let mut next_index = self.traverse_until($folder_name).next_block();
-            loop {
-                let (folder, next_block) = self.fs.read_data(next_index as usize);
-                next_index = next_block;
-
-                blocks.extend_one(folder);
-
-                if next_index == 0 {
-                    break;
-                }
-            }
-
-            blocks
-                .iter()
+            (0..)
+                .scan(
+                    Some(self.traverse_until($folder_name).next_block()),
+                    |option, _| {
+                        option.map(|next_block| {
+                            let (folder, next) = self.fs.read_data(next_block as usize);
+                            *option = next;
+                            folder
+                        })
+                    },
+                )
                 .flat_map(|folder| {
                     folder
                         .as_inodes()
@@ -656,6 +648,7 @@ macro_rules! folder_read_method {
                             let mut reader = InodeReader::new(&self.fs, i);
                             <$return_type>::try_from(&mut reader)
                         })
+                        .collect::<Vec<_>>()
                 })
                 .collect()
         }

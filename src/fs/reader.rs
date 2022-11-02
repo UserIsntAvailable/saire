@@ -12,7 +12,7 @@ use std::{
 pub(crate) struct InodeReader<'a> {
     data: Option<DataBlock>,
     fs: &'a FileSystemReader,
-    next_block: u32,
+    next_block: Option<u32>,
     offset: usize,
 }
 
@@ -24,7 +24,7 @@ impl<'a> InodeReader<'a> {
         Self {
             fs,
             data: None,
-            next_block: inode.next_block(),
+            next_block: Some(inode.next_block()),
             offset: 0,
         }
     }
@@ -34,6 +34,9 @@ impl<'a> InodeReader<'a> {
         let buf_len = buffer.len();
         let mut bytes_left = buffer.len();
         let mut buffer = BufWriter::new(buffer);
+
+        // TODO: scan pattern?
+        // TODO: this probably can be better written.
 
         loop {
             if let Some(data) = &self.data {
@@ -56,10 +59,11 @@ impl<'a> InodeReader<'a> {
                     break;
                 };
             } else {
-                let (read_data, next_block) = self.fs.read_data(self.next_block as usize);
-
-                self.data = Some(read_data);
-                self.next_block = next_block;
+                if let Some(next_block) = self.next_block {
+                    let (read_data, next_block) = self.fs.read_data(next_block as usize);
+                    self.data = Some(read_data);
+                    self.next_block = next_block
+                }
             };
         }
 

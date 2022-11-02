@@ -34,10 +34,11 @@ fn traverse_data<'a>(
     index: usize,
     on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
 ) -> Option<Inode> {
+    // FIX: Use `scan pattern`.
     let mut next_index = index;
     loop {
         let (data, next_block) = fs.read_data(next_index);
-        next_index = next_block as usize;
+        next_index = next_block.map_or(0, |n| n as usize);
 
         for inode in data.as_inodes() {
             if inode.flags() == 0 {
