@@ -1,7 +1,7 @@
 use super::FileSystemReader;
 use crate::block::{
     data::{DataBlock, Inode, InodeType},
-    BLOCKS_PER_PAGE, SAI_BLOCK_SIZE,
+    SAI_BLOCK_SIZE,
 };
 use std::{
     io::{BufWriter, Write},
@@ -12,20 +12,20 @@ use std::{
 pub(crate) struct InodeReader<'a> {
     data: Option<DataBlock>,
     fs: &'a FileSystemReader,
-    next_block: usize,
-    position: usize,
+    next_block: u32,
+    offset: usize,
 }
 
 impl<'a> InodeReader<'a> {
-    pub(crate) fn new(fs: &'a FileSystemReader, inode: Inode) -> Self {
+    pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
-        debug_assert!(inode.next_block() % 512 != 0, "It seems that an `Inode` can point to a `TableBlock`.");
+        debug_assert!(inode.next_block() % 512 != 0,);
 
         Self {
             fs,
             data: None,
-            next_block: (inode.next_block() as usize).into(),
-            position: 0,
+            next_block: inode.next_block(),
+            offset: 0,
         }
     }
 
@@ -33,49 +33,33 @@ impl<'a> InodeReader<'a> {
     pub(crate) fn read(&mut self, buffer: &mut [u8]) -> usize {
         let buf_len = buffer.len();
         let mut bytes_left = buffer.len();
-        let mut buf_writer = BufWriter::new(buffer);
+        let mut buffer = BufWriter::new(buffer);
 
-        // TODO: Better variable names.
         loop {
             if let Some(data) = &self.data {
                 let bytes = data.as_bytes();
-                let bytes_to_read = bytes_left + self.position;
+                let end_offset = bytes_left + self.offset;
 
-                if bytes_to_read >= SAI_BLOCK_SIZE {
-                    let seek_fw = SAI_BLOCK_SIZE - self.position;
-                    buf_writer.write(&bytes[self.position..seek_fw]).unwrap();
+                if end_offset >= SAI_BLOCK_SIZE {
+                    let bytes_read = &bytes[self.offset % SAI_BLOCK_SIZE..];
+                    buffer.write(bytes_read).unwrap();
 
+                    bytes_left -= bytes_read.len();
                     self.data = None;
-                    self.position = 0;
-                    bytes_left -= seek_fw;
+                    self.offset = 0;
                 } else {
-                    let seek_fw = bytes_to_read;
-                    buf_writer.write(&bytes[self.position..seek_fw]).unwrap();
+                    buffer.write(&bytes[self.offset..end_offset]).unwrap();
 
-                    self.position += buf_len;
                     bytes_left = 0;
+                    self.offset = end_offset;
 
                     break;
                 };
             } else {
-                // There is `debug_assert()` on `new()` that will prevent an `Inode` to point to a
-                // `TableBlock` from its `next_block()` index.
-                //
-                // If that ever happens it should be an easy fix (inverse the if here, and do
-                // next_block() -1 on `new()` ).
-                //
-                // I could make the change now to be safe, but I actually want to know if it could
-                // happen.
-                self.data = Some(self.fs.read_data(self.next_block));
+                let (read_data, next_block) = self.fs.read_data(self.next_block as usize);
 
-                // The stream might intercept a `TableBlock` while reading the stream.
-                // If that happens then we ignore it.
-                // And go to the next `block` which is guaranteed to be a `DataBlock`.
-                self.next_block += if self.next_block % BLOCKS_PER_PAGE == 0 {
-                    2
-                } else {
-                    1
-                };
+                self.data = Some(read_data);
+                self.next_block = next_block;
             };
         }
 
@@ -106,7 +90,9 @@ impl<'a> InodeReader<'a> {
         unsafe { *(buffer.as_ptr() as *const T) }
     }
 
-    pub(crate) unsafe fn read_stream_header(&mut self) -> Option<([std::ffi::c_uchar; 4], u32)> {
+    pub(crate) unsafe fn read_next_stream_header(
+        &mut self,
+    ) -> Option<([std::ffi::c_uchar; 4], u32)> {
         let mut tag: [std::ffi::c_uchar; 4] = unsafe { self.read_as() };
 
         if tag == [0, 0, 0, 0] {

@@ -34,30 +34,38 @@ fn traverse_data<'a>(
     index: usize,
     on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
 ) -> Option<Inode> {
-    let data = fs.read_data(index);
+    let mut next_index = index;
+    loop {
+        let (data, next_block) = fs.read_data(next_index);
+        next_index = next_block as usize;
 
-    for inode in data.as_inodes() {
-        if inode.flags() == 0 {
-            break;
-        }
+        for inode in data.as_inodes() {
+            if inode.flags() == 0 {
+                break;
+            }
 
-        match inode.r#type() {
-            InodeType::File => {
-                if on_traverse(TraverseEvent::File, &inode) {
-                    return Some(inode.to_owned());
+            match inode.r#type() {
+                InodeType::File => {
+                    if on_traverse(TraverseEvent::File, &inode) {
+                        return Some(inode.to_owned());
+                    }
+                }
+                InodeType::Folder => {
+                    if on_traverse(TraverseEvent::FolderStart, &inode) {
+                        return Some(inode.to_owned());
+                    };
+
+                    traverse_data(&fs, inode.next_block() as usize, on_traverse);
+
+                    if on_traverse(TraverseEvent::FolderEnd, &inode) {
+                        return Some(inode.to_owned());
+                    };
                 }
             }
-            InodeType::Folder => {
-                if on_traverse(TraverseEvent::FolderStart, &inode) {
-                    return Some(inode.to_owned());
-                };
+        }
 
-                traverse_data(&fs, inode.next_block() as usize, on_traverse);
-
-                if on_traverse(TraverseEvent::FolderEnd, &inode) {
-                    return Some(inode.to_owned());
-                };
-            }
+        if next_index == 0 {
+            break;
         }
     }
 

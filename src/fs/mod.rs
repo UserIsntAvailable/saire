@@ -6,7 +6,8 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     convert::AsRef,
-    io::{self, BufReader, Cursor, Read, Seek}, fs::File,
+    fs::File,
+    io::{self, BufReader, Cursor, Read, Seek},
 };
 
 pub(crate) trait ReadSeek: Read + Seek {}
@@ -77,7 +78,7 @@ impl FileSystemReader {
     }
 
     /// Returns the current seek position from the start of the stream.
-    fn position(&self) -> u64 {
+    pub(crate) fn position(&self) -> u64 {
         self.buff.borrow_mut().stream_position().unwrap()
     }
 
@@ -110,7 +111,7 @@ impl FileSystemReader {
     /// # Panics
     ///
     /// TODO
-    pub(crate) fn read_data(&self, index: usize) -> DataBlock {
+    pub(crate) fn read_data(&self, index: usize) -> (DataBlock, u32) {
         debug_assert!(index % BLOCKS_PER_PAGE != 0);
 
         let read_block = |i: usize| {
@@ -134,11 +135,12 @@ impl FileSystemReader {
             })
             .entries;
 
-        DataBlock::new(
-            &read_block(index),
-            entries[index % BLOCKS_PER_PAGE].checksum,
+        let entry = entries[index % BLOCKS_PER_PAGE];
+
+        (
+            DataBlock::new(&read_block(index), entry.checksum).expect("sai file is corrupted"),
+            entry.next_block,
         )
-        .expect("sai file is corrupted")
     }
 }
 

@@ -4,7 +4,7 @@ pub(crate) mod path {
     /// Gets a file from `resources` folder.
     pub(crate) fn read_res(res: impl AsRef<Path>) -> String {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
+            .join(".resources")
             .join(res)
             .to_str()
             .unwrap()
