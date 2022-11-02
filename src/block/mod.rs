@@ -1,74 +1,72 @@
+//! A `.sai` is encrypted in ECB blocks in which any randomly accessed block can be decrypted by
+//! also decrypting the appropriate `TableBlock` and accessing its 32-bit key found within.
+//!
+//! An individual block in a `.sai` file is 4096 bytes of data. Every block index that is a multiple
+//! of 512(0, 512, 1024, etc) is a `TableBlock` containing meta-data about the block itself and the
+//! 511 blocks after it. Every other block that is not a `TableBlock` is a `DataBlock`.
+
 pub(crate) mod data;
 pub(crate) mod table;
+pub(crate) const SAI_BLOCK_SIZE: usize = 0x1000;
+pub(crate) const BLOCKS_PER_PAGE: usize = SAI_BLOCK_SIZE / 8;
+pub(crate) type BlockBuffer = [u8; SAI_BLOCK_SIZE];
 
 use self::data::Inode;
 use self::table::TableEntry;
-use std::{fmt::Display, mem::size_of};
+use std::mem::size_of;
 
-#[derive(Debug)]
-pub(crate) enum Error {
-    BadSize,
-    BadChecksum { actual: u32, expected: u32 },
-}
+const DECRYPTED_BUFFER_SIZE: usize = SAI_BLOCK_SIZE / size_of::<u32>();
+type DecryptedBuffer = [u32; DECRYPTED_BUFFER_SIZE];
+type TableEntryBuffer = [TableEntry; SAI_BLOCK_SIZE / size_of::<TableEntry>()];
+type InodeBuffer = [Inode; SAI_BLOCK_SIZE / size_of::<Inode>()];
 
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::BadSize => {
-                write!(f, "&[u8] needs to be '{}' bytes long.", SAI_BLOCK_SIZE)
-            }
-            Error::BadChecksum { actual, expected } => {
-                write!(
-                    f,
-                    // FIX: Err message could be improved.
-                    "The block's checksum '{}' doesn't match the expected checksum '{}'.",
-                    actual, expected
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-pub(crate) const SAI_BLOCK_SIZE: usize = 0x1000;
-pub(crate) const BLOCKS_PER_PAGE: usize = SAI_BLOCK_SIZE / 8;
-pub(crate) const DECRYPTED_BUFFER_SIZE: usize = SAI_BLOCK_SIZE / size_of::<u32>();
-
-pub(crate) type BlockBuffer = [u8; SAI_BLOCK_SIZE];
-pub(crate) type DecryptedBuffer = [u32; DECRYPTED_BUFFER_SIZE];
-pub(crate) type TableEntryBuffer = [TableEntry; SAI_BLOCK_SIZE / size_of::<TableEntry>()];
-pub(crate) type InodeBuffer = [Inode; SAI_BLOCK_SIZE / size_of::<Inode>()];
-
-/// A `.sai` is encrypted in ECB blocks in which any randomly accessed block can be decrypted by
-/// also decrypting the appropriate `TableBlock` and accessing its 32-bit key found within.
+/// Gets the `checksum` for the current `block`.
 ///
-/// An individual block in a `.sai` file is 4096 bytes of data. Every block index that is a multiple
-/// of 512(0, 512, 1024, etc) is a `TableBlock` containing meta-data about the block itself and the
-/// 511 blocks after it. Every other block that is not a `TableBlock` is a `DataBlock`.
-pub(crate) trait SaiBlock {
-    /// Gets the `checksum` for the current `block`.
-    ///
-    /// ## Implementation
-    ///
-    /// ### TableBlock
-    ///
-    /// The first checksum entry found within the `TableBlock` is a checksum of the table itself.
-    ///
-    /// ### DataBlock
-    ///
-    /// All 1024 integers ( data ) are exclusive-ored with an initial checksum of zero, which is
-    /// rotated left 1 bit before the exclusive-or operation. Finally the lowest bit is set, making
-    /// all checksums an odd number.
-    ///
-    /// ## Notes
-    ///
-    /// ### DataBlock
-    ///
-    /// A block-level corruption can be detected by a checksum mismatch. If the `DataBlock`'s
-    /// generated checksum does not match the checksum found at the appropriate table entry within
-    /// the `TableBlock` then the `DataBlock` is considered corrupted.
-    fn checksum(&self) -> u32;
+/// ## Implementation
+///
+/// ### TableBlock
+///
+/// The first checksum entry found within the `TableBlock` is the checksum of the table itself.
+///
+/// ### DataBlock
+///
+/// All 1024 integers ( data ) are exclusive-ored with an initial checksum of zero, which is
+/// rotated left 1 bit before the exclusive-or operation. Finally the lowest bit is set, making
+/// all checksums an odd number.
+///
+/// ## Notes
+///
+/// ### DataBlock
+///
+/// A block-level corruption can be detected by a checksum mismatch. If the `DataBlock`'s
+/// generated checksum does not match the checksum found at the appropriate table entry within
+/// the `TableBlock` then the `DataBlock` is considered corrupted.
+fn checksum(data: DecryptedBuffer) -> u32 {
+    (0..DECRYPTED_BUFFER_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ data[i]) | 1
+}
+
+fn decrypt(data: u32) -> u32 {
+    (0..=24)
+        .step_by(8)
+        .fold(0, |s, i| s + USER[((data >> i) & 0xFF) as usize] as usize) as u32
+}
+
+fn to_u32(bytes: &[u8]) -> DecryptedBuffer {
+    debug_assert!(bytes.len() == SAI_BLOCK_SIZE);
+
+    let bytes = bytes.as_ptr() as *const u32;
+
+    // SAFETY: `bytes` is a valid pointer.
+    //
+    // - the `bytes` is contiguous, because it is an array of `u8`s.
+    //
+    // - since `bytes.len` needs to be equal to `SAI_BLOCK_SIZE`, then size for the slice needs
+    // to be `SAI_BLOCK_SIZE / 4` ( DATA_SIZE ), because u32 is 4 times bigger than a u8.
+    //
+    // - slice ( the return value ), will not be modified, since it is not a &mut.
+    let slice = unsafe { std::slice::from_raw_parts(bytes, DECRYPTED_BUFFER_SIZE) };
+
+    slice.try_into().unwrap()
 }
 
 const USER: [u32; 256] = [
@@ -141,44 +139,10 @@ const LOCAL_STATE: [u32; 256] = [
     0x96B17B00, 0xB5C789E3, 0xFFEBF9ED, 0xD7C4B349, 0xDE3281D8, 0x689E4904, 0xE683F32F, 0x2B3CB0E1,
 ];
 
-#[inline]
-fn to_u32(bytes: &[u8]) -> Result<DecryptedBuffer, Error> {
-    if bytes.len() != SAI_BLOCK_SIZE {
-        Err(Error::BadSize)
-    } else {
-        let bytes = bytes.as_ptr() as *const u32;
-
-        // SAFETY: `bytes` is a valid pointer.
-        //
-        // - the `bytes` is contiguous, because it is an array of `u8`s.
-        //
-        // - since `bytes.len` needs to be equal to `SAI_BLOCK_SIZE`, then size for the slice needs
-        // to be `SAI_BLOCK_SIZE / 4` ( DATA_SIZE ), because u32 is 4 times bigger than a u8.
-        //
-        // - slice ( the return value ), will not be modified, since it is not a &mut.
-        let slice = unsafe { std::slice::from_raw_parts(bytes, DECRYPTED_BUFFER_SIZE) };
-
-        Ok(slice.try_into().unwrap())
-    }
-}
-
-#[inline]
-fn decrypt(data: u32) -> u32 {
-    (0..=24)
-        .step_by(8)
-        .fold(0, |s, i| s + USER[((data >> i) & 0xFF) as usize] as usize) as u32
-}
-
-#[inline]
-fn checksum(data: DecryptedBuffer) -> u32 {
-    (0..DECRYPTED_BUFFER_SIZE).fold(0, |s, i| ((s << 1) | (s >> 31)) ^ data[i]) | 1
-}
-
 #[cfg(test)]
 mod tests {
     use super::{data::*, table::*, *};
     use crate::utils::path::read_res;
-    use eyre::Result;
     use lazy_static::lazy_static;
     use std::fs::read;
 
@@ -190,24 +154,20 @@ mod tests {
     }
 
     #[test]
-    fn table_new_works() -> Result<()> {
-        assert!(TableBlock::new(*TABLE, 0).is_ok());
-
-        Ok(())
+    fn table_new_works() {
+        assert!(TableBlock::new(*TABLE, 0).is_some());
     }
 
     #[test]
-    fn data_new_works() -> Result<()> {
-        let table_entries = TableBlock::new(*TABLE, 0)?.entries;
-        assert!(DataBlock::new(*DATA, table_entries[2].checksum).is_ok());
-
-        Ok(())
+    fn data_new_works() {
+        let table_entries = TableBlock::new(*TABLE, 0).unwrap().entries;
+        assert!(DataBlock::new(*DATA, table_entries[2].checksum).is_some());
     }
 
     #[test]
-    fn data_new_has_valid_data() -> Result<()> {
-        let table_entries = TableBlock::new(*TABLE, 0)?.entries;
-        let data_block = DataBlock::new(*DATA, table_entries[2].checksum)?;
+    fn data_new_has_valid_data() {
+        let table_entries = TableBlock::new(*TABLE, 0).unwrap().entries;
+        let data_block = DataBlock::new(*DATA, table_entries[2].checksum).unwrap();
         let inodes = data_block.as_inodes();
         let inode = &inodes[0];
 
@@ -216,7 +176,5 @@ mod tests {
         assert_eq!(inode.r#type(), &InodeType::File);
         assert_eq!(inode.size(), 32);
         assert_eq!(inode.timestamp(), 1567531938);
-
-        Ok(())
     }
 }

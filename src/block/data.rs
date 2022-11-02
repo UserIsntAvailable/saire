@@ -1,6 +1,5 @@
-use crate::utils;
-
 use super::*;
+use crate::utils;
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -62,7 +61,7 @@ impl Inode {
 
     /// The next `DataBlock` index to look for.
     ///
-    /// Depending on the `type()` of this node it will mean something different:
+    /// Depending on the `type()` of this node it will mean different things:
     ///
     /// ## InodeType::Folder
     ///
@@ -88,14 +87,13 @@ impl Inode {
 }
 
 pub(crate) struct DataBlock {
-    checksum: u32,
     u32: DecryptedBuffer,
 }
 
 impl DataBlock {
     /// Decrypts a `&[u8]` containing a `DataBlock` structure.
-    pub(crate) fn new(bytes: &[u8], table_checksum: u32) -> Result<Self, Error> {
-        let mut data = to_u32(bytes)?;
+    pub(crate) fn new(bytes: &[u8], table_checksum: u32) -> Option<Self> {
+        let mut data = to_u32(bytes);
         let mut prev_data = table_checksum;
 
         (0..DECRYPTED_BUFFER_SIZE).for_each(|i| {
@@ -105,18 +103,7 @@ impl DataBlock {
             prev_data = cur_data
         });
 
-        let actual_checksum = checksum(data);
-        if table_checksum == actual_checksum {
-            Ok(Self {
-                checksum: actual_checksum,
-                u32: data,
-            })
-        } else {
-            Err(Error::BadChecksum {
-                actual: actual_checksum,
-                expected: table_checksum,
-            })
-        }
+        (table_checksum == checksum(data)).then_some(Self { u32: data })
     }
 
     pub(crate) fn as_bytes(&self) -> &BlockBuffer {
@@ -143,5 +130,3 @@ impl DataBlock {
         unsafe { &*(ptr as *const InodeBuffer) }
     }
 }
-
-#[rustfmt::skip] impl SaiBlock for DataBlock { fn checksum(&self) -> u32 { self.checksum } }
