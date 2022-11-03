@@ -16,13 +16,8 @@ use std::{
 // TODO: documentation.
 // TODO: serde feature.
 // TODO: should *all* types here have `Sai` prefix?
-
-// FIX: Welp seems that Im gonna be stuck here for a looooooooooooooooooooooooong time
-//
-// If I ever finish this I should rename the library to `saire` ( Sai Reversed Engineered ), very
-// cool right?
-//
-// UPDATE: I FUCKING DID IT............................. LETS GOOOOOOOOOOOOOOOOOOOOOOOOOO.
+// TODO: I probably want to split this in multiples mods; 800 lines of code in a single file is a
+// little bit excessive.
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -55,6 +50,15 @@ impl From<EncodingError> for Error {
             EncodingError::LimitsExceeded => Self::Unknown(),
         }
     }
+}
+
+#[cfg(feature = "png")]
+fn create_png<'a>(file: File, width: u32, height: u32) -> Encoder<'a, BufWriter<File>> {
+    let mut png = Encoder::new(BufWriter::new(file), width, height);
+    png.set_color(png::ColorType::Rgba);
+    png.set_depth(png::BitDepth::Eight);
+
+    png
 }
 
 // TODO: impl std::error::Error for Error {}
@@ -220,7 +224,7 @@ impl TryFrom<u32> for LayerType {
 
     fn try_from(value: u32) -> Result<Self> {
         if value > u16::MAX.into() {
-            panic!("value if bigget than u16::MAX")
+            panic!("value if bigger than u16::MAX")
         }
 
         match value {
@@ -299,7 +303,7 @@ pub struct LayerBounds {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
     pub r#type: LayerType,
-    pub identifier: u32,
+    pub id: u32,
     pub bounds: LayerBounds,
     pub opacity: u8,
     pub visible: bool,
@@ -322,14 +326,18 @@ pub struct Layer {
     pub texture_scale: Option<u16>,
     pub texture_opacity: Option<u8>,
     // TODO: peff stream
+
+    // The additional data of the `Layer`. If the layer is a folder or set, there is no additional
+    // data. If the layer is `LayerType::Layer` then data will hold pixels in the RGBA color model.
+    //
+    // For now, others `LayerType`s will not include additional data.
+    pub data: Option<Vec<u8>>,
 }
 
-impl TryFrom<&mut InodeReader<'_>> for Layer {
-    type Error = Error;
-
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+impl Layer {
+    fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
         let r#type: u32 = unsafe { reader.read_as() };
-        let identifier: u32 = unsafe { reader.read_as() };
+        let id: u32 = unsafe { reader.read_as() };
         let bounds: LayerBounds = unsafe { reader.read_as() };
         let _: u32 = unsafe { reader.read_as() };
         let opacity: u8 = unsafe { reader.read_as() };
@@ -380,14 +388,14 @@ impl TryFrom<&mut InodeReader<'_>> for Layer {
         }
 
         let r#type: LayerType = r#type.try_into()?;
+        let mut data: Option<Vec<u8>> = None;
 
         // TODO: This needs some serious refactoring.
-        if r#type == LayerType::Layer {
+        if decompress_layer_data && r#type == LayerType::Layer {
             const TILE_SIZE: u32 = 32;
 
             let index_2d = |x: u32, y: u32, stride: u32| (x + (y * stride)) as usize;
 
-            // Image using raw pointers.
             let rle_decompress_stride = |dest: &mut [u8],
                                          src: &[u8],
                                          stride: usize,
@@ -432,11 +440,11 @@ impl TryFrom<&mut InodeReader<'_>> for Layer {
             let layer_tiles_x = bounds.width / TILE_SIZE;
 
             let mut tile_map = vec![0; (layer_tiles_y * layer_tiles_x) as usize];
-
             reader.read(&mut tile_map);
 
-            let mut layer_image = vec![0u32; (bounds.width * bounds.height) as usize];
-            let mut decompressed_tile = [0; 0x1000];
+            let mut image_bytes = vec![0; (bounds.width * bounds.height * 4) as usize];
+            let mut decompressed_rle = [0; SAI_BLOCK_SIZE];
+            // TODO: read_with_size api on InodeReader.
             // let mut compressed_data = [0; 0x1000];
 
             for y in 0..layer_tiles_y {
@@ -450,16 +458,17 @@ impl TryFrom<&mut InodeReader<'_>> for Layer {
                     loop {
                         let size: u16 = unsafe { reader.read_as() };
 
-                        let mut compressed_tile = vec![0; size.into()];
-                        if reader.read(&mut compressed_tile) != size.into() {
-                            panic!("Erorr Reading RLE stream");
+                        let mut compressed_rle = vec![0; size.into()];
+                        if reader.read(&mut compressed_rle) != size.into() {
+                            // TODO:
+                            return Err(Error::Format());
                         };
 
-                        compressed_tile.resize(2048, 0);
+                        compressed_rle.resize(2048, 0);
 
                         rle_decompress_stride(
-                            &mut decompressed_tile,
-                            &compressed_tile,
+                            &mut decompressed_rle,
+                            &compressed_rle,
                             size_of::<u32>(),
                             SAI_BLOCK_SIZE / size_of::<u32>(),
                             channel,
@@ -475,55 +484,41 @@ impl TryFrom<&mut InodeReader<'_>> for Layer {
                         }
                     }
 
-                    let image_src =
-                        unsafe { std::mem::transmute::<_, [u32; 1024]>(decompressed_tile) };
+                    let dest = &mut image_bytes
+                        [index_2d(x * TILE_SIZE, y * bounds.width, TILE_SIZE) * 4..];
 
-                    let image_dest =
-                        &mut layer_image[index_2d(x * TILE_SIZE, y * bounds.width, TILE_SIZE)..];
+                    (0..)
+                        .zip(decompressed_rle.chunks_exact_mut(4))
+                        .for_each(|(i, chunk)| {
+                            // BGRA -> RGBA.
+                            chunk.swap(0, 2);
 
-                    for i in 0..TILE_SIZE * TILE_SIZE {
-                        let cur_pixel = image_src[i as usize];
+                            // Alpha is pre-multiplied, convert to straight. Get Alpha into
+                            // [0.0, 1.0] range.
+                            let scale = chunk[3] as f32 / 255.0;
 
-                        image_dest[index_2d(i % TILE_SIZE, i / TILE_SIZE, bounds.width)] =
-                            cur_pixel;
-                    }
+                            // Ignore alpha and normalize RGB values.
+                            chunk[..3]
+                                .iter_mut()
+                                .for_each(|c| *c = (*c as f32 * scale).round() as u8);
+
+                            for (dst, src) in dest
+                                [index_2d(i % TILE_SIZE, i / TILE_SIZE, bounds.width) * 4..]
+                                .iter_mut()
+                                .zip(chunk)
+                            {
+                                *dst = *src
+                            }
+                        });
                 }
             }
 
-            // let file = File::create(format!(
-            //     "layer-{:0>8x}-{}",
-            //     identifier,
-            //     name.as_ref().unwrap(),
-            // ))
-            // .unwrap();
-            //
-            // let mut png = Encoder::new(BufWriter::new(file), bounds.width, bounds.height);
-            // png.set_color(png::ColorType::Rgba);
-            // png.set_depth(png::BitDepth::Eight);
-            //
-            // let layer_image_as_u8s = unsafe {
-            //     let ratio = std::mem::size_of::<u32>() / std::mem::size_of::<u8>();
-            //
-            //     let length = layer_image.len() * ratio;
-            //     let capacity = layer_image.capacity() * ratio;
-            //     let ptr = layer_image.as_mut_ptr() as *mut u8;
-            //
-            //     // Don't run the destructor for vec32
-            //     std::mem::forget(layer_image);
-            //
-            //     // Construct new Vec
-            //     Vec::from_raw_parts(ptr, length, capacity)
-            // };
-            //
-            // png.write_header()
-            //     .unwrap()
-            //     .write_image_data(&layer_image_as_u8s)
-            //     .unwrap()
+            data = Some(image_bytes);
         }
 
         Ok(Self {
             r#type,
-            identifier,
+            id,
             bounds,
             opacity,
             visible,
@@ -537,7 +532,55 @@ impl TryFrom<&mut InodeReader<'_>> for Layer {
             texture_name,
             texture_scale,
             texture_opacity,
+            data,
         })
+    }
+
+    #[cfg(feature = "png")]
+    /// Gets a png image from the underlying `Layer` data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use saire;
+    ///
+    /// let layers = SaiDocument::new_unchecked("my_sai_file.sai").layers();
+    /// let layer = layers[0];
+    ///
+    /// if layer.r#type == LayerType::Layer {
+    ///     // if path is `None` it will save the file at ./{id}-{name}.png
+    ///     layer.to_png(None);
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// If invoked with a `Layer` with a type other than `[LayerType::Layer]`.
+    pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
+        if let Some(ref image_data) = self.data {
+            let png = create_png(
+                path.map_or_else(
+                    || {
+                        Ok::<File, Error>(File::create(format!(
+                            "{:0>8x}-{}.png",
+                            self.id,
+                            self.name.as_ref().unwrap()
+                        ))?)
+                    },
+                    |path| Ok(File::create(path)?),
+                )?,
+                self.bounds.width,
+                self.bounds.height,
+            );
+
+            Ok(png.write_header()?.write_image_data(image_data)?)
+        } else {
+            if self.r#type == LayerType::Layer {
+                unreachable!("users can't not skip layer data yet.")
+            } else {
+                panic!("For now, `saire` can only decompress `LayerType::Layer` data.")
+            }
+        }
     }
 }
 
@@ -553,14 +596,11 @@ pub struct Thumbnail {
 
 impl Thumbnail {
     #[cfg(feature = "png")]
+    /// Gets a png image from the underlying `Thumbnail` pixels.
     pub fn to_png(&self, path: impl AsRef<Path>) -> Result<()> {
-        let image = File::create(path)?;
-
-        let mut png = Encoder::new(BufWriter::new(image), self.width, self.height);
-        png.set_color(png::ColorType::Rgba);
-        png.set_depth(png::BitDepth::Eight);
-
-        Ok(png.write_header()?.write_image_data(&self.pixels)?)
+        Ok(create_png(File::create(path)?, self.width, self.height)
+            .write_header()?
+            .write_image_data(&self.pixels)?)
     }
 }
 
@@ -605,26 +645,19 @@ pub struct SaiDocument {
 
 // TODO
 //
-// Sadly, you can't just put /// on top of the macro call to set documentation on the function. I
-// guess I could pass the documentation as a parameter on the macro, but that will be kinda ugly...
-
-macro_rules! file_read {
-    ($self:ident, $return_type:ty, $file_name:literal) => {{
-        let file = $self.traverse_until($file_name);
-        let mut reader = InodeReader::new(&$self.fs, &file);
-        <$return_type>::try_from(&mut reader)
-    }};
-}
+// Sadly, you can't just put /// on top of the macro call to set documentation on it. I guess I
+// could pass the documentation as a parameter on the macro, but that will be kinda ugly...
 
 macro_rules! file_read_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
-            file_read!(self, $return_type, $file_name)
+            let file = self.traverse_until($file_name);
+            let mut reader = InodeReader::new(&self.fs, &file);
+            <$return_type>::try_from(&mut reader)
         }
     };
 }
 
-// TODO: This doesn't need to be a macro.
 macro_rules! folder_read_method {
     ($method_name:ident, $return_type:ty, $folder_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<Vec<$return_type>> {
@@ -646,7 +679,7 @@ macro_rules! folder_read_method {
                         .filter(|i| i.flags() != 0)
                         .map(|i| {
                             let mut reader = InodeReader::new(&self.fs, i);
-                            <$return_type>::try_from(&mut reader)
+                            <$return_type>::new(&mut reader, true)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -682,13 +715,16 @@ impl SaiDocument {
     fn traverse_until(&self, filename: &str) -> Inode {
         self.fs
             .traverse_root(|_, i| i.name().contains(filename))
-            .expect("root is expected to have inodes")
+            .expect("an inode should be found.")
     }
 
     file_read_method!(author, Author, ".");
     file_read_method!(canvas, Canvas, "canvas");
     file_read_method!(thumbnail, Thumbnail, "thumbnail");
 
+    // TODO: Let the user skip the data decompression from the `Layer`. Maybe I could also add the
+    // ability to re-parse the Layer to get the layer data at a later time; However, a seeking api
+    // will be needed to not read bytes that were already read.
     folder_read_method!(layers, Layer, "layers");
     // TODO: Not that useful, since I can't parse `LayerType::Mask` yet.
     folder_read_method!(sublayers, Layer, "sublayers");
@@ -729,7 +765,7 @@ mod tests {
         let doc = SaiDocument::from(bytes);
         let layers = doc.layers()?;
 
-        // TODO: Test.
+        assert_eq!(layers.len(), 1);
 
         Ok(())
     }

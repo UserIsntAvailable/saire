@@ -19,7 +19,7 @@ pub(crate) struct InodeReader<'a> {
 impl<'a> InodeReader<'a> {
     pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
-        debug_assert!(inode.next_block() % 512 != 0,);
+        debug_assert!(inode.next_block() % 512 != 0);
 
         Self {
             fs,

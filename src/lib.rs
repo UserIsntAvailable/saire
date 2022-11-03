@@ -1,15 +1,7 @@
 #![allow(dead_code, unused_variables)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
 #![deny(unsafe_op_in_unsafe_fn)]
-#![feature(
-    array_methods,
-    cell_update,
-    extend_one,
-    map_try_insert,
-    result_flattening,
-    seek_stream_len,
-    stmt_expr_attributes
-)]
+#![feature(cell_update, map_try_insert, seek_stream_len, stmt_expr_attributes)]
 
 pub use document::*;
 
