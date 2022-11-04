@@ -126,7 +126,7 @@ impl DataBlock {
         //
         // - The data is not dangling.
         //
-        // - `Inode` is `repr(C)`, so the memory layout is aligned.
+        // - `Inode` is `#[repr(C)]` so that the memory layout is aligned.
         unsafe { &*(ptr as *const InodeBuffer) }
     }
 }

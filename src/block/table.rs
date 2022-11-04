@@ -33,7 +33,7 @@ impl TableBlock {
         //
         // - The data is not dangling.
         //
-        // - `TableEntry` is `repr(C)`, so the memory layout is aligned.
+        // - `TableEntry` is `#[repr(C)]` so that the memory layout is aligned.
         let entries = unsafe { *(ptr as *const TableEntryBuffer) };
 
         // Setting the first checksum to 0 and calculating the checksum of the entire table produces

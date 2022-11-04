@@ -1,3 +1,5 @@
+use num_traits::Num;
+
 use super::FileSystemReader;
 use crate::block::{
     data::{DataBlock, Inode, InodeType},
@@ -8,7 +10,7 @@ use std::{
     mem::size_of,
 };
 
-/// Reads file like files from a `FileSystemReader`. i.e: .xxxxxxxxxxxxxxxx, canvas, or thumbnail.
+/// Reads the contents of an `InodeType::File`.
 pub(crate) struct InodeReader<'a> {
     data: Option<DataBlock>,
     fs: &'a FileSystemReader,
@@ -19,7 +21,6 @@ pub(crate) struct InodeReader<'a> {
 impl<'a> InodeReader<'a> {
     pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
         debug_assert!(inode.r#type() == &InodeType::File);
-        debug_assert!(inode.next_block() % 512 != 0);
 
         Self {
             fs,
@@ -31,12 +32,15 @@ impl<'a> InodeReader<'a> {
 
     /// TODO
     pub(crate) fn read(&mut self, buffer: &mut [u8]) -> usize {
-        let buf_len = buffer.len();
-        let mut bytes_left = buffer.len();
+        self.read_with_size(buffer, buffer.len())
+    }
+
+    /// TODO
+    pub(crate) fn read_with_size(&mut self, buffer: &mut [u8], size: usize) -> usize {
+        let mut bytes_left = size;
         let mut buffer = BufWriter::new(buffer);
 
-        // TODO: scan pattern?
-        // TODO: this probably can be better written.
+        // TODO: scan pattern? this probably can be better written.
 
         loop {
             if let Some(data) = &self.data {
@@ -51,6 +55,8 @@ impl<'a> InodeReader<'a> {
                     self.data = None;
                     self.offset = 0;
                 } else {
+                    // FIX: Read todo bellow. The usize returned from this method will never be a
+                    // number other than 0.
                     buffer.write(&bytes[self.offset..end_offset]).unwrap();
 
                     bytes_left = 0;
@@ -59,15 +65,30 @@ impl<'a> InodeReader<'a> {
                     break;
                 };
             } else {
+                // TODO: next_block shouldn't be an `Option`; the method should return Err if
+                // someone calls after the end of the file or not enough bytes were able to be read;
+                // The caller shouldn't need to check if all bytes were read.
                 if let Some(next_block) = self.next_block {
                     let (read_data, next_block) = self.fs.read_data(next_block as usize);
                     self.data = Some(read_data);
                     self.next_block = next_block
+                } else {
+                    panic!("End of file.");
                 }
             };
         }
 
-        buf_len - bytes_left
+        size - bytes_left
+    }
+
+    /// Reads `size_of::<T>()` bytes, and returns the `Num`.
+    ///
+    /// This is basically a safe way to call `read_as()` if everything that you need is a number.
+    pub(crate) fn read_as_num<T>(&mut self) -> T
+    where
+        T: Num + Copy,
+    {
+        unsafe { self.read_as() }
     }
 
     /// Reads `size_of::<T>()` bytes, and returns the value.
@@ -78,8 +99,8 @@ impl<'a> InodeReader<'a> {
     ///
     /// # Safety
     ///
-    /// The method is just casting the buffers bytes ( raw pointer ) to `T`; You need to
-    /// abide all the safeties of that operation.
+    /// The method is just casting the buffers bytes ( raw pointer ) to `T`; You need to abide all
+    /// the safeties of that operation.
     pub(crate) unsafe fn read_as<T>(&mut self) -> T
     where
         T: Copy,
@@ -94,6 +115,7 @@ impl<'a> InodeReader<'a> {
         unsafe { *(buffer.as_ptr() as *const T) }
     }
 
+    /// TODO
     pub(crate) unsafe fn read_next_stream_header(
         &mut self,
     ) -> Option<([std::ffi::c_uchar; 4], u32)> {
@@ -103,7 +125,7 @@ impl<'a> InodeReader<'a> {
             None
         } else {
             tag.reverse();
-            let size: u32 = unsafe { self.read_as() };
+            let size: u32 = self.read_as_num();
 
             Some((tag, size))
         }
