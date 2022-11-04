@@ -29,14 +29,16 @@ impl TryFrom<u32> for LayerType {
             panic!("value if bigger than u16::MAX")
         }
 
+        use LayerType::*;
+
         match value {
-            0 => Ok(Self::RootLayer),
-            3 => Ok(Self::Layer),
-            4 => Ok(Self::_Unknown4),
-            5 => Ok(Self::Linework),
-            6 => Ok(Self::Mask),
-            7 => Ok(Self::_Unknown7),
-            8 => Ok(Self::Set),
+            0 => Ok(RootLayer),
+            3 => Ok(Layer),
+            4 => Ok(_Unknown4),
+            5 => Ok(Linework),
+            6 => Ok(Mask),
+            7 => Ok(_Unknown7),
+            8 => Ok(Set),
             _ => {
                 // TODO:
                 Err(Error::Unknown())
@@ -69,17 +71,19 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
             Error::Unknown()
         })?;
 
+        use BlendingMode::*;
+
         #[rustfmt::skip]
         match str {
-            "pass"  => Ok(Self::PassThrough),
-            "norm"  => Ok(Self::Normal),
-            "mul "  => Ok(Self::Multiply),
-            "scrn"  => Ok(Self::Screen),
-            "over"  => Ok(Self::Overlay),
-            "add "  => Ok(Self::Luminosity),
-            "sub "  => Ok(Self::Shade),
-            "adsb"  => Ok(Self::LumiShade),
-            "cbin"  => Ok(Self::Binary),
+            "pass"  => Ok(PassThrough),
+            "norm"  => Ok(Normal),
+            "mul "  => Ok(Multiply),
+            "scrn"  => Ok(Screen),
+            "over"  => Ok(Overlay),
+            "add "  => Ok(Luminosity),
+            "sub "  => Ok(Shade),
+            "adsb"  => Ok(LumiShade),
+            "cbin"  => Ok(Binary),
             _ => {
                 // TODO:
                 Err(Error::Unknown())
@@ -169,9 +173,9 @@ impl Layer {
             // SAFETY: tag guarantees to have valid UTF-8 ( ASCII more specifically ).
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "name" => {
-                    // FIX: There is definitely a better way to do this.
-                    let mut buf = [0; 256];
-                    reader.read(&mut buf);
+                    // SAFETY: this is casting a *const u8 -> *const u8.
+                    let buf: [u8; 256] = unsafe { reader.read_as() };
+
                     let buf = buf.splitn(2, |c| c == &0).next().unwrap();
                     name = Some(String::from_utf8_lossy(buf).to_string());
                 }
@@ -179,18 +183,19 @@ impl Layer {
                 "plid" => parent_layer = Some(reader.read_as_num::<u32>()),
                 "fopn" => open = Some(reader.read_as_num::<u8>() == 1),
                 "texn" => {
-                    let mut buf = [0; 64];
-                    reader.read(&mut buf);
+                    // SAFETY: this is casting a *const u8 -> *const u8.
+                    let buf: [u8; 64] = unsafe { reader.read_as() };
 
                     // SAFETY: `buf` is a valid pointer.
                     let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
+
                     texture_name = Some(String::from_utf16_lossy(buf.as_slice()))
                 }
                 "texp" => {
                     texture_scale = Some(reader.read_as_num::<u16>());
                     texture_opacity = Some(reader.read_as_num::<u8>());
                 }
-                _ => drop(reader.read(&mut vec![0; size as usize])),
+                _ => drop(reader.read_exact(&mut vec![0; size as usize])),
             }
         }
 
@@ -326,7 +331,7 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
     let x_tiles = width / TILE_SIZE;
 
     let mut tile_map = vec![0; y_tiles * x_tiles];
-    reader.read(&mut tile_map);
+    reader.read_exact(&mut tile_map)?;
 
     let mut image_bytes = vec![0; width * height * 4];
     let mut decompressed_rle = [0; SAI_BLOCK_SIZE];
@@ -340,10 +345,9 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
             }
 
             // Reads BGRA channels. Skip the next 4 ( unknown ).
-            (0..8).for_each(|channel| {
+            (0..8).try_for_each(|channel| {
                 let size: usize = reader.read_as_num::<u16>().into();
-                // FIX: Check if all bytes were read.
-                reader.read_with_size(&mut compressed_rle, size);
+                reader.read_with_size(&mut compressed_rle, size)?;
 
                 if channel < 4 {
                     rle_decompress_stride(
@@ -354,7 +358,9 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
                         channel,
                     );
                 }
-            });
+
+                Ok::<_, Error>(())
+            })?;
 
             let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
 

@@ -40,8 +40,7 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
 
         let pixels_len = (width * height * 4) as usize;
         let mut pixels = vec![0u8; pixels_len];
-        // FIX: Check if all bytes were read.
-        let pixels_read = reader.read(pixels.as_mut_slice());
+        reader.read_exact(pixels.as_mut_slice())?;
 
         pixels
             .chunks_exact_mut(4)

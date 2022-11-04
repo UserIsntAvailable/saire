@@ -24,12 +24,12 @@ use std::{
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+// TODO:
+
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
-    // TODO:
     Format(),
-    // TODO:
     Unknown(),
 }
 
@@ -42,15 +42,17 @@ impl From<io::Error> for Error {
 #[cfg(feature = "png")]
 impl From<EncodingError> for Error {
     fn from(err: EncodingError) -> Self {
+        use EncodingError::*;
+
         match err {
-            EncodingError::IoError(io) => io.into(),
+            IoError(io) => io.into(),
             // TODO: Too many errors to match, I will give it a look later.
             //
             // In theory if the image format is BM32 this should be unreachable; gonna continue
             // investigating this later.
-            EncodingError::Format(_) => Self::Unknown(),
-            EncodingError::Parameter(_) => Self::Unknown(),
-            EncodingError::LimitsExceeded => Self::Unknown(),
+            Format(_) => Self::Unknown(),
+            Parameter(_) => Self::Unknown(),
+            LimitsExceeded => Self::Unknown(),
         }
     }
 }
@@ -94,7 +96,7 @@ macro_rules! layers_read {
 }
 
 impl SaiDocument {
-    // TODO: Make public when FileSystemReader implements `try_from`.
+    // TODO: Make public when FileSystem implements `try_from`.
     fn new(path: impl AsRef<Path>) -> Result<Self> {
         Ok(Self {
             fs: FileSystemReader::new(File::open(path)?),

@@ -75,7 +75,7 @@ impl TryFrom<&mut InodeReader<'_>> for Canvas {
                 }
                 "wsrc" => selection_source = Some(reader.read_as_num::<u32>()),
                 "layr" => selected_layer = Some(reader.read_as_num::<u32>()),
-                _ => drop(reader.read(&mut vec![0; size as usize])),
+                _ => drop(reader.read_exact(&mut vec![0; size as usize])),
             }
         }
 
