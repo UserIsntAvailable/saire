@@ -22,12 +22,9 @@ impl TryFrom<&mut InodeReader<'_>> for Author {
     fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
         let bitflag: u32 = reader.read_as_num();
 
-        // On libsai it says that it is always `0x08000000`, but in the files that I tested it is
-        // always `0x80000000`; it probably is a typo. However, my test file has 0x80000025 which is
-        // weird; gonna ignore for now, the rest of the information is fine.
-        // if bitflag != 0x80000000 {
-        //     return Err(crate::FormatError::Invalid.into());
-        // }
+        if bitflag >> 24 != 0x80 {
+            return Err(crate::FormatError::Invalid.into());
+        }
 
         let _: u32 = reader.read_as_num();
 
