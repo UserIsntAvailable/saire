@@ -94,7 +94,7 @@ impl<'a> InodeReader<'a> {
     ///
     /// # Panics
     ///
-    /// If there are not enough bytes on the `buffer` to create `size_of::<T>()`.
+    /// - If there are not enough bytes on the `buffer` to create `size_of::<T>()`.
     ///
     /// # Safety
     ///

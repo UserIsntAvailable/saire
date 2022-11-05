@@ -1,7 +1,130 @@
+use crate::FormatError;
+
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
+use linked_hash_map::{IntoIter, LinkedHashMap};
+use std::collections::HashMap;
 use std::fs::File;
 use std::mem::size_of;
+use std::ops::Index;
 use std::path::Path;
+
+/// Holds information about the `Layer`s that make up a SAI image.
+///
+/// This is used to keep track of 3 properties of a `Layer`:
+///
+/// - id
+/// - type
+/// - order/rank
+///
+/// Where order/rank refers to the index from `low` to `high` where the layer is placed in the
+/// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
+///
+/// To get the `type` of a `Layer`, you can use the `index()` ( [] ) method. To get the `order` of
+/// a `Layer`, you can use `index_of()`.
+///
+/// # Examples
+///
+/// ```
+/// use saire;
+///
+/// let doc = SaiDocument::new_unchecked("my_sai_file.sai");
+/// // subtbl would work the same.
+/// let laytbl = doc.laytbl().unwrap();
+///
+/// // id = 2 is `usually` the first layer.
+/// assert_eq!(laytbl.index_of(2), 0);
+/// ```
+pub struct LayerTable {
+    // Using a `LinkedHashMap`, because this is probably the way how SYSTEMAX implement it.
+    /// Maps the identifier of a `Layer` to its position from bottom to top.
+    inner: LinkedHashMap<u32, LayerType>,
+}
+
+impl LayerTable {
+    /// Gets the index of a specified `key`.
+    pub fn index_of(&self, key: u32) -> Option<usize> {
+        self.inner.keys().position(|v| *v == key)
+    }
+
+    /// Modifies a `Vec<Layer>` to follow the order from `lowest` to `highest`.
+    ///
+    /// If you ever wanna return to the original order you can sort the `Layer`s by id.
+    ///
+    /// # Panics
+    ///
+    /// - If any of the of the `Layer::id`s is not available in the `LayerTable`.
+    pub fn order(&self, layers: &mut Vec<Layer>) {
+        let keys = self
+            .inner
+            .keys()
+            .enumerate()
+            .map(|(i, k)| (k, i))
+            .collect::<HashMap<_, _>>();
+
+        layers.sort_by_cached_key(|e| keys[&e.id])
+    }
+}
+
+impl TryFrom<&mut InodeReader<'_>> for LayerTable {
+    type Error = Error;
+
+    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+        Ok(LayerTable {
+            inner: (0..reader.read_as_num())
+                .map(|i| {
+                    let id: u32 = reader.read_as_num();
+
+                    // LayerType, not needed in this case.
+                    let r#type: LayerType = reader.read_as_num::<u16>().try_into()?;
+
+                    // Gets sent as windows message 0x80CA for some reason.
+                    //
+                    // 1       if LayerType::Set.
+                    // 157/158 if LayerType::Layer.
+                    let _: u16 = reader.read_as_num();
+
+                    Ok((id, r#type))
+                })
+                .collect::<Result<LinkedHashMap<_, _>>>()?,
+        })
+    }
+}
+
+impl Index<u32> for LayerTable {
+    type Output = LayerType;
+
+    /// Gets the `LayerType` of the specified layer `id`.
+    ///
+    /// # Panics
+    ///
+    /// - If the id wasn't found.
+    fn index(&self, id: u32) -> &Self::Output {
+        &self.inner[&id]
+    }
+}
+
+pub struct LayerTableIntoIter {
+    inner: IntoIter<u32, LayerType>,
+}
+
+impl Iterator for LayerTableIntoIter {
+    type Item = (u32, LayerType);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+impl IntoIterator for LayerTable {
+    type Item = (u32, LayerType);
+    type IntoIter = LayerTableIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LayerTableIntoIter {
+            inner: self.inner.into_iter(),
+        }
+    }
+}
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,8 +139,25 @@ pub enum LayerType {
     /// Masks applied to any layer object.
     Mask = 0x06,
     _Unknown7 = 0x07,
-    /// Layer Folder.
+    /// Folder.
     Set = 0x08,
+}
+
+impl LayerType {
+    fn new(value: u16) -> Result<Self> {
+        use LayerType::*;
+
+        match value {
+            0 => Ok(RootLayer),
+            3 => Ok(Layer),
+            4 => Ok(_Unknown4),
+            5 => Ok(Linework),
+            6 => Ok(Mask),
+            7 => Ok(_Unknown7),
+            8 => Ok(Set),
+            _ => Err(FormatError::Invalid.into()),
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -29,21 +169,15 @@ impl TryFrom<u32> for LayerType {
             panic!("value if bigger than u16::MAX")
         }
 
-        use LayerType::*;
+        LayerType::new(value as u16)
+    }
+}
 
-        match value {
-            0 => Ok(RootLayer),
-            3 => Ok(Layer),
-            4 => Ok(_Unknown4),
-            5 => Ok(Linework),
-            6 => Ok(Mask),
-            7 => Ok(_Unknown7),
-            8 => Ok(Set),
-            _ => {
-                // TODO:
-                Err(Error::Unknown())
-            }
-        }
+impl TryFrom<u16> for LayerType {
+    type Error = Error;
+
+    fn try_from(value: u16) -> Result<Self> {
+        LayerType::new(value)
     }
 }
 
@@ -66,41 +200,36 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
 
     fn try_from(mut bytes: [std::ffi::c_uchar; 4]) -> Result<Self> {
         bytes.reverse();
-        let str = std::str::from_utf8(&bytes).map_err(|_| {
-            // TODO:
-            Error::Unknown()
-        })?;
 
         use BlendingMode::*;
 
         #[rustfmt::skip]
-        match str {
-            "pass"  => Ok(PassThrough),
-            "norm"  => Ok(Normal),
-            "mul "  => Ok(Multiply),
-            "scrn"  => Ok(Screen),
-            "over"  => Ok(Overlay),
-            "add "  => Ok(Luminosity),
-            "sub "  => Ok(Shade),
-            "adsb"  => Ok(LumiShade),
-            "cbin"  => Ok(Binary),
-            _ => {
-                // TODO:
-                Err(Error::Unknown())
-            },
+        // SAFETY: bytes guarantees to have valid utf8 ( ASCII ) values.
+        match unsafe { std::str::from_utf8_unchecked(&bytes) } {
+            "pass" => Ok(PassThrough),
+            "norm" => Ok(Normal),
+            "mul " => Ok(Multiply),
+            "scrn" => Ok(Screen),
+            "over" => Ok(Overlay),
+            "add " => Ok(Luminosity),
+            "sub " => Ok(Shade),
+            "adsb" => Ok(LumiShade),
+            "cbin" => Ok(Binary),
+            _ => Err(FormatError::Invalid.into()),
         }
     }
 }
 
 /// Rectangular bounds
 ///
-/// Can be off-canvas or larger than canvas if the user moves. The layer outside of the "canvas
-/// window" without cropping similar to photoshop 0,0 is top-left corner of image.
+/// Can be off-canvas or larger than canvas if the user moves the layer outside of the "canvas
+/// window" without cropping; similar to photoshop 0,0 is top-left corner of image.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
-    // Can be negative, rounded to nearest multiple of 32
+    /// Can be negative, rounded to nearest multiple of 32
     pub x: i32,
+    /// Can be negative, rounded to nearest multiple of 32
     pub y: i32,
 
     pub width: u32,
@@ -177,11 +306,11 @@ impl Layer {
                     let buf: [u8; 256] = unsafe { reader.read_as() };
 
                     let buf = buf.splitn(2, |c| c == &0).next().unwrap();
-                    name = Some(String::from_utf8_lossy(buf).to_string());
+                    name = String::from_utf8_lossy(buf).to_string().into();
                 }
-                "pfid" => parent_set = Some(reader.read_as_num::<u32>()),
-                "plid" => parent_layer = Some(reader.read_as_num::<u32>()),
-                "fopn" => open = Some(reader.read_as_num::<u8>() == 1),
+                "pfid" => parent_set = reader.read_as_num::<u32>().into(),
+                "plid" => parent_layer = reader.read_as_num::<u32>().into(),
+                "fopn" => open = (reader.read_as_num::<u8>() == 1).into(),
                 "texn" => {
                     // SAFETY: this is casting a *const u8 -> *const u8.
                     let buf: [u8; 64] = unsafe { reader.read_as() };
@@ -189,13 +318,13 @@ impl Layer {
                     // SAFETY: `buf` is a valid pointer.
                     let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
 
-                    texture_name = Some(String::from_utf16_lossy(buf.as_slice()))
+                    texture_name = String::from_utf16_lossy(buf.as_slice()).into()
                 }
                 "texp" => {
-                    texture_scale = Some(reader.read_as_num::<u16>());
-                    texture_opacity = Some(reader.read_as_num::<u8>());
+                    texture_scale = reader.read_as_num::<u16>().into();
+                    texture_opacity = reader.read_as_num::<u8>().into();
                 }
-                _ => drop(reader.read_exact(&mut vec![0; size as usize])),
+                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
             }
         }
 
@@ -250,7 +379,7 @@ impl Layer {
     ///
     /// # Panics
     ///
-    /// If invoked with a `Layer` with a type other than `[LayerType::Layer]`.
+    /// - If invoked with a `Layer` with a type other than `[LayerType::Layer]`.
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
         if let Some(ref image_data) = self.data {
             let png = create_png(

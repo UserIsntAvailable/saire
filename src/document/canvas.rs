@@ -1,3 +1,5 @@
+use crate::FormatError;
+
 use super::{Error, InodeReader, Result};
 
 #[repr(u16)]
@@ -43,11 +45,10 @@ impl TryFrom<&mut InodeReader<'_>> for Canvas {
     type Error = Error;
 
     fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
-        let aligment: u32 = reader.read_as_num();
+        let alignment: u32 = reader.read_as_num();
 
-        if aligment != 16 {
-            // TODO:
-            return Err(Error::Format());
+        if alignment != 16 {
+            return Err(FormatError::Invalid.into());
         }
 
         let width: u32 = reader.read_as_num();
@@ -65,22 +66,22 @@ impl TryFrom<&mut InodeReader<'_>> for Canvas {
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "reso" => {
                     // Conversion from 16.16 fixed point integer to a float.
-                    dots_per_inch = Some(reader.read_as_num::<u32>() as f32 / 65536f32);
+                    dots_per_inch = (reader.read_as_num::<u32>() as f32 / 65536f32).into();
 
-                    // SAFETY: `SizeUnit` is `#[repr(16)]`.
-                    size_unit = Some(unsafe { reader.read_as::<SizeUnit>() });
+                    // SAFETY: `SizeUnit` is `#[repr(u16)]`.
+                    size_unit = unsafe { reader.read_as::<SizeUnit>() }.into();
 
-                    // SAFETY: `SizeUnit` is `#[repr(16)]`.
-                    resolution_unit = Some(unsafe { reader.read_as::<ResolutionUnit>() });
+                    // SAFETY: `ResolutionUnit` is `#[repr(u16)]`.
+                    resolution_unit = unsafe { reader.read_as::<ResolutionUnit>() }.into();
                 }
-                "wsrc" => selection_source = Some(reader.read_as_num::<u32>()),
-                "layr" => selected_layer = Some(reader.read_as_num::<u32>()),
-                _ => drop(reader.read_exact(&mut vec![0; size as usize])),
+                "wsrc" => selection_source = reader.read_as_num::<u32>().into(),
+                "layr" => selected_layer = reader.read_as_num::<u32>().into(),
+                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
             }
         }
 
         Ok(Self {
-            alignment: aligment,
+            alignment,
             width,
             height,
             dots_per_inch,

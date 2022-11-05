@@ -1,3 +1,5 @@
+use crate::FormatError;
+
 use super::{create_png, Error, InodeReader, Result};
 use std::fs::File;
 use std::path::Path;
@@ -34,8 +36,7 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
 
         // BM32
         if magic != [66, 77, 51, 50] {
-            // TODO
-            return Err(Error::Format());
+            return Err(FormatError::Invalid.into());
         }
 
         let pixels_len = (width * height * 4) as usize;

@@ -13,6 +13,7 @@ use crate::{
 #[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
 use std::{
+    fmt::Display,
     fs::File,
     io::{self, BufWriter},
     path::Path,
@@ -29,13 +30,52 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     IoError(io::Error),
-    Format(),
+    Format(FormatError),
     Unknown(),
+}
+
+#[derive(Debug)]
+pub enum FormatError {
+    MissingEntry(String),
+    Invalid,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Error::*;
+
+        let msg = match self {
+            IoError(io) => io.to_string(),
+            Format(format) => format.to_string(),
+            Unknown() => "Something went wrong while reading the file.".to_string(),
+        };
+
+        write!(f, "{msg}")
+    }
+}
+
+impl Display for FormatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use FormatError::*;
+
+        let msg = match self {
+            MissingEntry(entry) => format!("'{}' entry is missing.", entry),
+            Invalid => "Invalid/Corrupted sai file.".to_string(),
+        };
+
+        write!(f, "{msg}",)
+    }
 }
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Error::IoError(err)
+    }
+}
+
+impl From<FormatError> for Error {
+    fn from(err: FormatError) -> Self {
+        Self::Format(err)
     }
 }
 
@@ -46,10 +86,10 @@ impl From<EncodingError> for Error {
 
         match err {
             IoError(io) => io.into(),
-            // TODO: Too many errors to match, I will give it a look later.
+            // FIX: Too many errors to match, I will give it a look later.
             //
-            // In theory if the image format is BM32 this should be unreachable; gonna continue
-            // investigating this later.
+            // In theory if the image format is always BM32 this should be unreachable; gonna
+            // continue investigating this later.
             Format(_) => Self::Unknown(),
             Parameter(_) => Self::Unknown(),
             LimitsExceeded => Self::Unknown(),
@@ -66,7 +106,7 @@ fn create_png<'a>(file: File, width: u32, height: u32) -> Encoder<'a, BufWriter<
     png
 }
 
-// TODO: impl std::error::Error for Error {}
+impl std::error::Error for Error {}
 
 pub struct SaiDocument {
     fs: FileSystemReader,
@@ -78,16 +118,22 @@ pub struct SaiDocument {
 // could pass the documentation as a parameter on the macro, but that will be kinda ugly...
 
 macro_rules! file_read {
+    ($self:ident, $return_type:ty, $file_name:literal) => {{
+        let file = $self.traverse_until($file_name)?;
+        let mut reader = InodeReader::new(&$self.fs, &file);
+        <$return_type>::try_from(&mut reader)
+    }};
+}
+
+macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
-            let file = self.traverse_until($file_name);
-            let mut reader = InodeReader::new(&self.fs, &file);
-            <$return_type>::try_from(&mut reader)
+            file_read!(self, $return_type, $file_name)
         }
     };
 }
 
-macro_rules! layers_read {
+macro_rules! layers_method {
     ($method_name:ident, $layer_name:literal, $decompress_layer:literal) => {
         pub fn $method_name(&self) -> $crate::Result<Vec<Layer>> {
             self.get_layers($layer_name, $decompress_layer)
@@ -110,19 +156,19 @@ impl SaiDocument {
     ///
     /// # Panics
     ///
-    /// - The file could not be read.
+    /// - If the provided file could not be read.
     ///
-    /// - Corrupted/Invalid SAI file.
+    /// - If the file is Corrupted/Invalid.
     pub fn new_unchecked(path: impl AsRef<Path>) -> Self {
         Self {
             fs: FileSystemReader::new_unchecked(File::open(path).unwrap()),
         }
     }
 
-    fn traverse_until(&self, filename: &str) -> Inode {
+    fn traverse_until(&self, filename: &str) -> Result<Inode> {
         self.fs
             .traverse_root(|_, i| i.name().contains(filename))
-            .expect("an inode should be found.")
+            .ok_or(FormatError::MissingEntry(filename.to_string()).into())
     }
 
     fn get_layers(
@@ -132,7 +178,7 @@ impl SaiDocument {
     ) -> Result<Vec<Layer>> {
         (0..)
             .scan(
-                Some(self.traverse_until(layer_folder).next_block()),
+                Some(self.traverse_until(layer_folder)?.next_block()),
                 |option, _| {
                     option.map(|next_block| {
                         let (folder, next) = self.fs.read_data(next_block as usize);
@@ -155,15 +201,17 @@ impl SaiDocument {
             .collect()
     }
 
-    file_read!(author, Author, ".");
-    file_read!(canvas, Canvas, "canvas");
-    file_read!(thumbnail, Thumbnail, "thumbnail");
+    file_method!(author, Author, ".");
+    file_method!(canvas, Canvas, "canvas");
+    file_method!(laytbl, LayerTable, "laytbl");
+    file_method!(subtbl, LayerTable, "subtbl");
+    file_method!(thumbnail, Thumbnail, "thumbnail");
 
-    layers_read!(layers, "layers", true);
+    layers_method!(layers, "layers", true);
     // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
     // layers_read!(layers_no_decompress, "layers", false);
 
-    layers_read!(sublayers, "sublayers", true);
+    layers_method!(sublayers, "sublayers", true);
     // TODO: I can't parse `LayerType::Mask` yet.
     // layers_read!(sublayers_no_decompress, "sublayers", false);
 }
@@ -198,11 +246,25 @@ mod tests {
     }
 
     #[test]
+    fn laybtl_works() -> Result<()> {
+        let doc = SaiDocument::from(BYTES.as_slice());
+        let laytbl = doc.laytbl()?;
+
+        use std::ops::Index;
+
+        assert_eq!(laytbl.index(2), &LayerType::Layer);
+        assert_eq!(laytbl.index_of(2).unwrap(), 0);
+        assert_eq!(laytbl.into_iter().count(), 1);
+
+        Ok(())
+    }
+
+    #[test]
     fn layers_works() -> Result<()> {
-        let bytes = BYTES.as_slice();
-        let doc = SaiDocument::from(bytes);
+        let doc = SaiDocument::from(BYTES.as_slice());
         let layers = doc.layers()?;
 
+        // FIX: More tests
         assert_eq!(layers.len(), 1);
 
         Ok(())
@@ -221,6 +283,20 @@ mod tests {
         assert_eq!(author.resolution_unit.unwrap(), ResolutionUnit::PixelsInch);
         assert!(author.selection_source.is_none());
         assert_eq!(author.selected_layer.unwrap(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn subtbl_works() {
+        let doc = SaiDocument::from(BYTES.as_slice());
+        assert!(doc.subtbl().is_err());
+    }
+
+    #[test]
+    fn sublayers_works() -> Result<()> {
+        let doc = SaiDocument::from(BYTES.as_slice());
+        assert!(doc.sublayers().is_err());
 
         Ok(())
     }

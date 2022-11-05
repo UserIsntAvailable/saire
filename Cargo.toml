@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+linked-hash-map = "0.5.6"
 num-traits = "0.2.15"
 png = { version = "0.17.6", optional = true }
 

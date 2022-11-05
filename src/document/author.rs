@@ -26,8 +26,7 @@ impl TryFrom<&mut InodeReader<'_>> for Author {
         // always `0x80000000`; it probably is a typo. However, my test file has 0x80000025 which is
         // weird; gonna ignore for now, the rest of the information is fine.
         // if bitflag != 0x80000000 {
-        //     // TODO:
-        //     return Err(Error::Format());
+        //     return Err(crate::FormatError::Invalid.into());
         // }
 
         let _: u32 = reader.read_as_num();
