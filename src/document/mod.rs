@@ -13,7 +13,8 @@ use crate::{
 #[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
 use std::{
-    fmt::Display,
+    collections::HashMap,
+    fmt::{Display, Formatter},
     fs::File,
     io::{self, BufWriter},
     path::Path,
@@ -41,7 +42,7 @@ pub enum FormatError {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use Error::*;
 
         let msg = match self {
@@ -55,7 +56,7 @@ impl Display for Error {
 }
 
 impl Display for FormatError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         use FormatError::*;
 
         let msg = match self {
@@ -63,7 +64,7 @@ impl Display for FormatError {
             Invalid => "Invalid/Corrupted sai file.".to_string(),
         };
 
-        write!(f, "{msg}",)
+        write!(f, "{msg}")
     }
 }
 
@@ -141,6 +142,15 @@ macro_rules! layers_method {
     };
 }
 
+macro_rules! layers_no_decompress_method {
+    ($method_name:ident, $layer_name:literal) => {
+        // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
+        fn $method_name(&self) -> $crate::Result<Vec<Layer>> {
+            self.get_layers($layer_name, false)
+        }
+    };
+}
+
 impl SaiDocument {
     // TODO: Make public when FileSystem implements `try_from`.
     fn new(path: impl AsRef<Path>) -> Result<Self> {
@@ -208,17 +218,89 @@ impl SaiDocument {
     file_method!(thumbnail, Thumbnail, "thumbnail");
 
     layers_method!(layers, "layers", true);
-    // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
-    // layers_read!(layers_no_decompress, "layers", false);
-
     layers_method!(sublayers, "sublayers", true);
+
+    // This methods are private for the moment.
+
+    layers_no_decompress_method!(layers_no_decompress, "layers");
     // TODO: I can't parse `LayerType::Mask` yet.
-    // layers_read!(sublayers_no_decompress, "sublayers", false);
+    layers_no_decompress_method!(sublayers_no_decompress, "sublayers");
 }
 
 impl From<&[u8]> for SaiDocument {
     fn from(bytes: &[u8]) -> Self {
         Self { fs: bytes.into() }
+    }
+}
+
+#[cfg(feature = "tree_view")]
+fn build_tree(
+    tree: &mut ptree::TreeBuilder,
+    index: u32,
+    map: &HashMap<u32, Vec<Layer>>,
+    include_color: bool,
+    visible_parent: bool,
+) {
+    use colored::Colorize;
+
+    for child in &map[&index] {
+        let ty = child.r#type;
+        let visible = child.visible && visible_parent;
+        let name = child.name.as_ref().unwrap().to_string();
+
+        let name = if include_color && !visible {
+            name.truecolor(69, 69, 69).italic().to_string()
+        } else {
+            name
+        };
+
+        if ty == LayerType::Set {
+            let name = if include_color {
+                name.truecolor(222, 222, 222).bold().to_string()
+            } else {
+                name
+            };
+
+            tree.begin_child(name);
+            build_tree(tree, child.id, map, include_color, visible);
+            tree.end_child();
+        } else if ty == LayerType::Layer {
+            let name = if include_color {
+                name.truecolor(200, 200, 200).to_string()
+            } else {
+                name
+            };
+
+            tree.add_empty_child(name);
+        }
+    }
+}
+
+#[cfg(feature = "tree_view")]
+impl Display for SaiDocument {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
+        self.laytbl().unwrap().order(&mut layers);
+        layers.reverse();
+
+        use ptree::TreeBuilder;
+        use itertools::Itertools;
+
+        let tree = &mut TreeBuilder::new(".".into());
+
+        build_tree(
+            tree,
+            0,
+            &layers
+                .into_iter()
+                .into_group_map_by(|l| l.parent_set.map_or(0, |id| id)),
+            f.alternate(),
+            true,
+        );
+
+        utils::ptree::write_tree(tree.build(), f).unwrap();
+
+        Ok(())
     }
 }
 
@@ -262,7 +344,7 @@ mod tests {
     #[test]
     fn layers_works() -> Result<()> {
         let doc = SaiDocument::from(BYTES.as_slice());
-        let layers = doc.layers()?;
+        let layers = doc.layers_no_decompress()?;
 
         // FIX: More tests
         assert_eq!(layers.len(), 1);
@@ -288,13 +370,13 @@ mod tests {
     }
 
     #[test]
-    fn subtbl_works() {
+    fn subtbl_is_err() {
         let doc = SaiDocument::from(BYTES.as_slice());
         assert!(doc.subtbl().is_err());
     }
 
     #[test]
-    fn sublayers_works() -> Result<()> {
+    fn sublayers_is_err() -> Result<()> {
         let doc = SaiDocument::from(BYTES.as_slice());
         assert!(doc.sublayers().is_err());
 
@@ -311,5 +393,19 @@ mod tests {
         assert_eq!(thumbnail.pixels.len(), 78400);
 
         Ok(())
+    }
+
+    #[test]
+    fn display_works() {
+        let doc = SaiDocument::from(BYTES.as_slice());
+        let output = doc.to_string();
+
+        assert_eq!(
+            format!("\n{output}"),
+            r#"
+.
+└─ Layer1
+"#
+        )
     }
 }

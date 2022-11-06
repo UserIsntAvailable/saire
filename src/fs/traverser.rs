@@ -157,7 +157,7 @@ mod tests {
         FileSystemReader::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
-            format!("\n{}", visitor),
+            format!("\n{visitor}"),
             r#"
      32 f 2019-09-03 .73851dcd1203b24d
      56 f 2019-09-03 canvas

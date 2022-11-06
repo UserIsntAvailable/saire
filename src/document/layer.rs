@@ -1,5 +1,4 @@
 use crate::FormatError;
-
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
 use linked_hash_map::{IntoIter, LinkedHashMap};
 use std::collections::HashMap;
@@ -16,7 +15,7 @@ use std::path::Path;
 /// - type
 /// - order/rank
 ///
-/// Where order/rank refers to the index from `low` to `high` where the layer is placed in the
+/// Where order/rank refers to the index from `lowest` to `highest` where the layer is placed in the
 /// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
 ///
 /// To get the `type` of a `Layer`, you can use the `index()` ( [] ) method. To get the `order` of
@@ -24,15 +23,19 @@ use std::path::Path;
 ///
 /// # Examples
 ///
-/// ```
-/// use saire;
+/// ```no_run
+/// use saire::{SaiDocument, Result};
 ///
-/// let doc = SaiDocument::new_unchecked("my_sai_file.sai");
-/// // subtbl would work the same.
-/// let laytbl = doc.laytbl().unwrap();
+/// fn main() -> Result<()> {
+///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
+///     // subtbl works the same in the same way.
+///     let laytbl = doc.laytbl()?;
+///     
+///     // id = 2 is `usually` the first layer.
+///     assert_eq!(laytbl.index_of(2), Some(0));
 ///
-/// // id = 2 is `usually` the first layer.
-/// assert_eq!(laytbl.index_of(2), 0);
+///     Ok(())
+/// }
 /// ```
 pub struct LayerTable {
     // Using a `LinkedHashMap`, because this is probably the way how SYSTEMAX implement it.
@@ -365,15 +368,19 @@ impl Layer {
     ///
     /// # Examples
     ///
-    /// ```
-    /// use saire;
+    /// ```no_run
+    /// use saire::{SaiDocument, LayerType, Result};
     ///
-    /// let layers = SaiDocument::new_unchecked("my_sai_file.sai").layers();
-    /// let layer = layers[0];
+    /// fn main() -> Result<()> {
+    ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
+    ///     let layer = &layers[0];
     ///
-    /// if layer.r#type == LayerType::Layer {
-    ///     // if path is `None` it will save the file at ./{id}-{name}.png
-    ///     layer.to_png(None);
+    ///     if layer.r#type == LayerType::Layer {
+    ///         // if path is `None` it will save the file at ./{id}-{name}.png
+    ///         layer.to_png(Some("layer-0.png"))?;
+    ///     }
+    ///
+    ///     Ok(())
     /// }
     /// ```
     ///
