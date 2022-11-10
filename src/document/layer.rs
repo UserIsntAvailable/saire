@@ -1,5 +1,5 @@
-use crate::FormatError;
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
+use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
 use std::collections::HashMap;
 use std::fs::File;
@@ -184,7 +184,7 @@ impl TryFrom<u16> for LayerType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum BlendingMode {
     PassThrough,
     Normal,
@@ -230,12 +230,12 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
-    /// Can be negative, rounded to nearest multiple of 32
     pub x: i32,
-    /// Can be negative, rounded to nearest multiple of 32
     pub y: i32,
 
+    /// Rounded to nearest multiple of 32
     pub width: u32,
+    /// Rounded to nearest multiple of 32
     pub height: u32,
 }
 
@@ -244,9 +244,14 @@ pub struct Layer {
     pub r#type: LayerType,
     pub id: u32,
     pub bounds: LayerBounds,
+    /// Value ranging from 100 to 0 to determinate the opacity of the `Layer`.
     pub opacity: u8,
+    /// Whether or not this `Layer` is visible.
     pub visible: bool,
+    /// To lock transparent pixels, so that you can only paint in pixels that are opaque.
+    // FIX: Should probably make this a bool.
     pub preserve_opacity: u8,
+    // FIX: Should probably make this a bool.
     pub clipping: u8,
     pub blending_mode: BlendingMode,
 
@@ -335,6 +340,7 @@ impl Layer {
 
         let data = if decompress_layer_data && r#type == LayerType::Layer {
             Some(decompress_layer(
+                opacity,
                 bounds.width as usize,
                 bounds.height as usize,
                 reader,
@@ -458,7 +464,12 @@ fn rle_decompress_stride(
     }
 }
 
-fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -> Result<Vec<u8>> {
+fn decompress_layer(
+    opacity: u8,
+    width: usize,
+    height: usize,
+    reader: &mut InodeReader<'_>,
+) -> Result<Vec<u8>> {
     let coord_to_index = |x, y, stride| (x + (y * stride));
 
     const TILE_SIZE: usize = 32;
@@ -483,6 +494,8 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
             // Reads BGRA channels. Skip the next 4 ( unknown ).
             (0..8).try_for_each(|channel| {
                 let size: usize = reader.read_as_num::<u16>().into();
+
+                debug_assert!(size <= compressed_rle.len());
                 reader.read_with_size(&mut compressed_rle, size)?;
 
                 if channel < 4 {
@@ -500,28 +513,176 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
 
             let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
 
-            for (i, chunk) in (0..).zip(decompressed_rle.chunks_exact_mut(4)) {
+            // Leave pre-multiplied.
+            //
+            for (i, chunk) in decompressed_rle.chunks_exact_mut(4).enumerate() {
                 // BGRA -> RGBA.
                 chunk.swap(0, 2);
 
-                // Alpha is pre-multiplied, convert to straight. Get Alpha into
-                // [0.0, 1.0] range.
-                let scale = chunk[3] as f32 / 255.0;
-
-                // Normalize RGB values, and leave alpha as it is.
-                for (i, (dst, src)) in dest
-                    [coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
+                for (dst, src) in dest[coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
                     .iter_mut()
                     .zip(chunk)
-                    .enumerate()
                 {
-                    *dst = if i != 3 {
-                        (*src as f32 * scale).round() as u8
-                    } else {
-                        *src
-                    }
+                    *dst = *src
                 }
             }
+
+            // Wunkolo SIMD
+            //
+            // for i in 0..(32 * 32) / 4 {
+            //     unsafe {
+            //         use std::arch::x86_64::*;
+            //
+            //         let src_ptr = decompressed_rle.as_ptr() as *const __m128i;
+            //         let src_ptr = src_ptr.add(i as usize);
+            //         let mut quad_pixel = _mm_loadu_si128(src_ptr);
+            //
+            //         quad_pixel = _mm_shuffle_epi8(
+            //             quad_pixel,
+            //             #[rustfmt::skip]
+            //             _mm_set_epi8(
+            //                 15, 12, 13, 14,
+            //                 11, 8,  9,  10,
+            //                 7,  4,  5,  6,
+            //                 3,  0,  1,  2,
+            //             ),
+            //         );
+            //
+            //         let scale: __m128 = _mm_div_ps(
+            //             _mm_cvtepi32_ps(_mm_shuffle_epi8(
+            //                 quad_pixel,
+            //                 #[rustfmt::skip]
+            //                 _mm_set_epi8(
+            //                     -1, -1, -1, 15,
+            //                     -1, -1, -1, 11,
+            //                     -1, -1, -1, 7,
+            //                     -1, -1, -1, 3,
+            //                 ),
+            //             )),
+            //             _mm_set1_ps(255.0),
+            //         );
+            //
+            //         const CHANNEL_0: i32 = 0;
+            //
+            //         let mut cur_channel = _mm_srli_epi32(quad_pixel, CHANNEL_0 * 8);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         let mut channel_float = _mm_cvtepi32_ps(cur_channel);
+            //
+            //         channel_float = _mm_div_ps(channel_float, _mm_set1_ps(255.0));
+            //         channel_float = _mm_div_ps(channel_float, scale);
+            //         channel_float = _mm_mul_ps(channel_float, _mm_set1_ps(255.0));
+            //
+            //         cur_channel = _mm_cvtps_epi32(channel_float);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         cur_channel = _mm_slli_epi32(cur_channel, CHANNEL_0 * 8);
+            //
+            //         quad_pixel =
+            //             _mm_andnot_si128(_mm_set1_epi32(0xFF << (CHANNEL_0 * 8)), quad_pixel);
+            //         quad_pixel = _mm_or_si128(quad_pixel, cur_channel);
+            //
+            //         const CHANNEL_1: i32 = 1;
+            //
+            //         let mut cur_channel = _mm_srli_epi32(quad_pixel, CHANNEL_1 * 8);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         let mut channel_float = _mm_cvtepi32_ps(cur_channel);
+            //
+            //         channel_float = _mm_div_ps(channel_float, _mm_set1_ps(255.0));
+            //         channel_float = _mm_div_ps(channel_float, scale);
+            //         channel_float = _mm_mul_ps(channel_float, _mm_set1_ps(255.0));
+            //
+            //         cur_channel = _mm_cvtps_epi32(channel_float);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         cur_channel = _mm_slli_epi32(cur_channel, CHANNEL_1 * 8);
+            //
+            //         quad_pixel =
+            //             _mm_andnot_si128(_mm_set1_epi32(0xFF << (CHANNEL_1 * 8)), quad_pixel);
+            //         quad_pixel = _mm_or_si128(quad_pixel, cur_channel);
+            //
+            //         const CHANNEL_2: i32 = 2;
+            //
+            //         let mut cur_channel = _mm_srli_epi32(quad_pixel, CHANNEL_2 * 8);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         let mut channel_float = _mm_cvtepi32_ps(cur_channel);
+            //
+            //         channel_float = _mm_div_ps(channel_float, _mm_set1_ps(255.0));
+            //         channel_float = _mm_div_ps(channel_float, scale);
+            //         channel_float = _mm_mul_ps(channel_float, _mm_set1_ps(255.0));
+            //
+            //         cur_channel = _mm_cvtps_epi32(channel_float);
+            //         cur_channel = _mm_and_si128(cur_channel, _mm_set1_epi32(0xFF));
+            //         cur_channel = _mm_slli_epi32(cur_channel, CHANNEL_2 * 8);
+            //
+            //         quad_pixel =
+            //             _mm_andnot_si128(_mm_set1_epi32(0xFF << (CHANNEL_2 * 8)), quad_pixel);
+            //         quad_pixel = _mm_or_si128(quad_pixel, cur_channel);
+            //
+            //         let dest_ptr = dest.as_mut_ptr() as *mut __m128i;
+            //         let dest_ptr = dest_ptr.add(((i % 8) + ((i / 8) * (width / 4))) as usize);
+            //
+            //         _mm_storeu_si128(dest_ptr, quad_pixel);
+            //     }
+            // }
+
+            // Wunkolo SIMD, but without SIMD
+            //
+            // for (i, chunk) in (0..).zip(decompressed_rle.chunks_exact_mut(4)) {
+            //     // BGRA -> RGBA.
+            //     chunk.swap(0, 2);
+            //
+            //     // Alpha is pre-multiplied, convert to straight. Get Alpha into
+            //     // [0.0, 1.0] range.
+            //     let scale = chunk[3] as f32 / 255.0;
+            //
+            //     let mut quad_pixel = i32::from_le_bytes(chunk.try_into().unwrap());
+            //     for c in 0..3 {
+            //         let mut cur_channel = quad_pixel >> (c * 8);
+            //         cur_channel &= 255;
+            //         let mut channel_float = cur_channel as f32;
+            //
+            //         channel_float /= 255.0;
+            //         channel_float /= scale;
+            //         channel_float *= 255.0;
+            //
+            //         cur_channel = channel_float as i32;
+            //         cur_channel &= 255;
+            //         cur_channel = cur_channel << (c * 8);
+            //
+            //         quad_pixel = !(0xFF << (c * 8)) & quad_pixel;
+            //         quad_pixel |= cur_channel;
+            //     }
+            //
+            //     for (dst, src) in dest[coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
+            //         .iter_mut()
+            //         .zip(i32::to_le_bytes(quad_pixel))
+            //     {
+            //         *dst = src;
+            //     }
+            // }
+
+            // pre-multiplied?
+            //
+            // for (i, chunk) in (0..).zip(decompressed_rle.chunks_exact_mut(4)) {
+            //     // BGRA -> RGBA.
+            //     chunk.swap(0, 2);
+            //
+            //     // Alpha is pre-multiplied, convert to straight. Get Alpha into
+            //     // [0.0, 1.0] range.
+            //     let scale = chunk[3] as f32 / 255.0;
+            //
+            //     // Normalize RGB values, and leave alpha as it is.
+            //     for (i, (dst, src)) in dest
+            //         [coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
+            //         .iter_mut()
+            //         .zip(chunk)
+            //         .enumerate()
+            //     {
+            //         *dst = if i != 3 {
+            //             (*src as f32 * scale).round() as u8
+            //         } else {
+            //             *src
+            //         }
+            //     }
+            // }
         }
     }
 

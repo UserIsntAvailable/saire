@@ -3,6 +3,14 @@ name = "saire"
 version = "0.2.0"
 edition = "2021"
 
+[lib]
+name = "saire"
+path = "src/lib.rs"
+
+[[bin]]
+name = "saire-cli"
+path = "src/main.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -12,12 +20,20 @@ linked-hash-map = "0.5.6"
 num-traits = "0.2.15"
 png = { version = "0.17.6", optional = true }
 ptree = { version = "0.4.0", optional = true }
+walkdir = "2.3.2"
+xblend = "0.1.0"
 
 [dev-dependencies]
 chrono = "0.4.22"
+criterion = "0.4.0"
 eyre = "0.6.8"
 lazy_static = "1.4.0"
+mtpng = "0.3.5"
 tabular = "0.2.0"
+
+[[bench]]
+name = "to_png"
+harness = false
 
 [features]
 default = ["png", "tree_view"]
