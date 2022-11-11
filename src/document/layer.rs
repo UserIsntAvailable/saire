@@ -1,7 +1,7 @@
 use crate::FormatError;
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
 use linked_hash_map::{IntoIter, LinkedHashMap};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::mem::size_of;
 use std::ops::Index;
@@ -244,12 +244,18 @@ pub struct Layer {
     pub r#type: LayerType,
     pub id: u32,
     pub bounds: LayerBounds,
+    /// Value ranging from 100 to 0 to determinate the opacity of the `Layer`.
     pub opacity: u8,
+    /// Whether or not this `Layer` is visible.
+    ///
+    /// If `LayerType::Set` is `visible = false`, all its children will also be `visible = false`.
     pub visible: bool,
-    pub preserve_opacity: u8,
-    pub clipping: u8,
+    /// If true, locks transparent pixels, so that you can only paint in pixels that are opaque.
+    pub preserve_opacity: bool,
+    pub clipping: bool,
     pub blending_mode: BlendingMode,
 
+    /// The name of the layer.
     pub name: Option<String>,
     /// If this layer is a child of a folder this will be a layer ID of the parent container layer.
     pub parent_set: Option<u32>,
@@ -270,7 +276,9 @@ pub struct Layer {
     // data. If the layer is `LayerType::Layer` then data will hold pixels in the RGBA color model.
     //
     // For now, others `LayerType`s will not include additional data.
-    pub data: Option<Vec<u8>>,
+    //
+    // The VecDeque has been already `make_continous()`ed.
+    pub data: Option<VecDeque<u8>>,
 }
 
 impl Layer {
@@ -283,9 +291,9 @@ impl Layer {
 
         let _: u32 = reader.read_as_num();
         let opacity: u8 = reader.read_as_num();
-        let visible: bool = reader.read_as_num::<u8>() == 1;
-        let preserve_opacity: u8 = reader.read_as_num();
-        let clipping: u8 = reader.read_as_num();
+        let visible: bool = reader.read_as_num::<u8>() >= 1;
+        let preserve_opacity: bool = reader.read_as_num::<u8>() >= 1;
+        let clipping: bool = reader.read_as_num::<u8>() >= 1;
         let _: u8 = reader.read_as_num();
 
         // SAFETY: `c_uchar` is an alias of `u8`.
@@ -388,6 +396,8 @@ impl Layer {
     ///
     /// - If invoked with a `Layer` with a type other than `[LayerType::Layer]`.
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
+        use crate::utils::pixel_ops::premultiplied_to_straight;
+
         if let Some(ref image_data) = self.data {
             let png = create_png(
                 path.map_or_else(
@@ -404,9 +414,9 @@ impl Layer {
                 self.bounds.height,
             );
 
-            // FIX: On debug builds this is pretty slow, need to do some benchmarks on release
-            // against `mtpng`, and test if the performance increase is worth it.
-            Ok(png.write_header()?.write_image_data(image_data)?)
+            Ok(png.write_header()?.write_image_data(
+                &premultiplied_to_straight(image_data.as_slices().0).as_slice(),
+            )?)
         } else {
             if self.r#type == LayerType::Layer {
                 unreachable!("users can't not skip layer data yet.")
@@ -458,7 +468,11 @@ fn rle_decompress_stride(
     }
 }
 
-fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -> Result<Vec<u8>> {
+fn decompress_layer(
+    width: usize,
+    height: usize,
+    reader: &mut InodeReader<'_>,
+) -> Result<VecDeque<u8>> {
     let coord_to_index = |x, y, stride| (x + (y * stride));
 
     const TILE_SIZE: usize = 32;
@@ -469,6 +483,7 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
     let mut tile_map = vec![0; y_tiles * x_tiles];
     reader.read_exact(&mut tile_map)?;
 
+    // TODO: implement using VecDeque.
     let mut image_bytes = vec![0; width * height * 4];
     let mut decompressed_rle = [0; SAI_BLOCK_SIZE];
     let mut compressed_rle = [0; SAI_BLOCK_SIZE / 2];
@@ -525,5 +540,5 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
         }
     }
 
-    Ok(image_bytes)
+    Ok(image_bytes.into())
 }

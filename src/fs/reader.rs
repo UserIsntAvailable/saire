@@ -12,7 +12,8 @@ use std::{
 
 /// Reads the contents of an `InodeType::File`.
 pub(crate) struct InodeReader<'a> {
-    /// block_bytes will be None `only` if read*() calls have been made.
+    /// Will be None if no read*() calls have been made; Also, if the file that we are reading from
+    /// doesn't have no more bytes to be read.
     cur_block: Option<u32>,
     file_reader: Option<Cursor<BlockBuffer>>,
     fs: &'a FileSystemReader,
@@ -69,8 +70,6 @@ impl<'a> InodeReader<'a> {
                     self.file_reader = Some(Cursor::new(datablock.as_bytes().to_owned()));
                     self.cur_block = next_block;
                 } else {
-                    // `cur_block` can only be `None` if the file that we are reading from doesn't
-                    // have no more bytes to be read.
                     panic!("End of file.");
                 }
             }
