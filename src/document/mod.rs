@@ -99,8 +99,8 @@ impl From<EncodingError> for Error {
 }
 
 #[cfg(feature = "png")]
-fn create_png<'a>(file: File, width: u32, height: u32) -> Encoder<'a, BufWriter<File>> {
-    let mut png = Encoder::new(BufWriter::new(file), width, height);
+pub(crate) fn create_png<'a>(file: File, width: u32, height: u32) -> Encoder<'a, File> {
+    let mut png = Encoder::new(file, width, height);
     png.set_color(png::ColorType::Rgba);
     png.set_depth(png::BitDepth::Eight);
 

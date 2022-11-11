@@ -1,3 +1,5 @@
+pub mod pixel_ops;
+
 pub(crate) mod path {
     use std::path::{Path, PathBuf};
 
