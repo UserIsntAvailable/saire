@@ -16,7 +16,7 @@ use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
     fs::File,
-    io::{self, BufWriter},
+    io,
     path::Path,
 };
 
@@ -283,8 +283,8 @@ impl Display for SaiDocument {
         self.laytbl().unwrap().order(&mut layers);
         layers.reverse();
 
-        use ptree::TreeBuilder;
         use itertools::Itertools;
+        use ptree::TreeBuilder;
 
         let tree = &mut TreeBuilder::new(".".into());
 

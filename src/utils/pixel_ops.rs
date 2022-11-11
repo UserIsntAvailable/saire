@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 /// Converts from RGBA `pre-multiplied`, to RGBA straight color format.
 pub fn premultiplied_to_straight(pixels: &[u8]) -> Vec<u8> {
     pixels
@@ -26,4 +28,40 @@ pub fn premultiplied_to_straight(pixels: &[u8]) -> Vec<u8> {
             i32::to_le_bytes(quad_pixel)
         })
         .collect::<Vec<_>>()
+}
+
+#[inline]
+pub fn luminosity(bg: u8, fg: u8) -> u8 {
+    f32::min(bg as f32 + fg as f32, 255.0) as u8
+}
+
+#[inline]
+pub fn multiply(bg: u8, fg: u8, bg_a: u8, fg_a: u8) -> u8 {
+    let diff = |a, b| ((a as f32 * b as f32) / 255.0) as u8;
+
+    normal(bg, diff(bg, fg), diff(bg_a, fg_a))
+}
+
+#[inline]
+pub fn normal(bg: u8, fg: u8, fg_a: u8) -> u8 {
+    (fg as f32 + bg as f32 * (1.0 - fg_a as f32 / 255.0)) as u8
+}
+
+#[inline]
+pub fn overlay(bg: u8, fg: u8, bg_a: u8, fg_a: u8) -> u8 {
+    // let bg = bg as f32;
+    // let fg = fg as f32;
+    //
+    // ((bg / 255.0) * (bg + ((2.0 * fg) / 255.0) * (255.0 - bg))) as u8
+
+    match fg.cmp(&127) {
+        Ordering::Less => screen(bg, fg),
+        Ordering::Equal => normal(bg, fg, fg_a),
+        Ordering::Greater => multiply(bg, fg, bg_a, fg_a),
+    }
+}
+
+#[inline]
+pub fn screen(bg: u8, fg: u8) -> u8 {
+    (255.0 - (((255.0 - bg as f32) * (255.0 - fg as f32)) / 255.0)) as u8
 }
