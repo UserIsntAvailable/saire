@@ -49,13 +49,20 @@ pub fn normal(bg: u8, fg: u8, fg_a: u8) -> u8 {
 
 #[inline]
 pub fn overlay(bg: u8, fg: u8, bg_a: u8, fg_a: u8) -> u8 {
-    // let bg = bg as f32;
-    // let fg = fg as f32;
-    //
-    // ((bg / 255.0) * (bg + ((2.0 * fg) / 255.0) * (255.0 - bg))) as u8
-
     match fg.cmp(&127) {
-        Ordering::Less => screen(bg, fg),
+        Ordering::Less => {
+            // FIX: Kinda works?
+
+            let bg = bg as f32;
+            let fg = fg as f32;
+            let fg_a = fg_a as f32;
+
+            let diff = bg / 255.0 * (bg + (2.0 * fg / 255.0) * (255.0 - bg));
+            let opacity = ((255.0 - fg_a) / 255.0) * 100.0;
+            let color = (diff - ((diff * opacity) / 100.0)) as u8;
+
+            normal(bg as u8, color, fg_a as u8)
+        }
         Ordering::Equal => normal(bg, fg, fg_a),
         Ordering::Greater => multiply(bg, fg, bg_a, fg_a),
     }

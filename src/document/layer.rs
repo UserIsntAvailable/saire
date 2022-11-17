@@ -206,7 +206,6 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
 
         use BlendingMode::*;
 
-        #[rustfmt::skip]
         // SAFETY: bytes guarantees to have valid utf8 ( ASCII ) values.
         match unsafe { std::str::from_utf8_unchecked(&bytes) } {
             "pass" => Ok(PassThrough),

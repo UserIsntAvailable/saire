@@ -20,8 +20,6 @@ linked-hash-map = "0.5.6"
 num-traits = "0.2.15"
 png = { version = "0.17.6", optional = true }
 ptree = { version = "0.4.0", optional = true }
-walkdir = "2.3.2"
-xblend = "0.1.0"
 
 [dev-dependencies]
 chrono = "0.4.22"
