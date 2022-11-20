@@ -3,10 +3,9 @@
 
 use png::Encoder;
 use saire::{utils::pixel_ops::*, BlendingMode, LayerType, Result, SaiDocument};
-use std::collections::HashSet;
-use std::fs::File;
-use std::path::PathBuf;
+use std::{collections::HashSet, fs::File, path::PathBuf};
 
+// TODO: Clap
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1).take(2);
 
@@ -37,8 +36,7 @@ fn main() -> Result<()> {
     let rounded_height = ((canvas.height & !0x1F) + 0x20) as usize;
 
     let mut no_visible: HashSet<u32> = HashSet::new();
-    // TODO: VecDeque
-    let mut image_bytes = vec![0; (rounded_width * rounded_height * 4) as usize];
+    let mut image_bytes = vec![0; (canvas.width * canvas.height as u32 * 4) as usize]; // TODO: VecDeque
 
     // TODO: Move layer's pixels to match `Layer::bounds`.
     for mut layer in layers
@@ -53,9 +51,8 @@ fn main() -> Result<()> {
                 }
             };
 
-            layer.visible
+            layer.visible && layer.r#type == LayerType::Layer
         })
-        .filter(|layer| layer.r#type == LayerType::Layer)
     {
         let fg_bytes = layer
             .data
@@ -64,62 +61,45 @@ fn main() -> Result<()> {
             .as_mut_slices()
             .0;
 
+        let fg_chunks = fg_bytes
+            .chunks_exact_mut(layer.bounds.width as usize * 4)
+            .skip(8)
+            .take(canvas.height as usize);
+
         for (bg_chunk, fg_chunk) in image_bytes
-            .chunks_exact_mut(rounded_width)
-            .zip(fg_bytes.chunks_exact_mut(layer.bounds.width as usize))
+            .chunks_exact_mut(canvas.width as usize * 4)
+            .zip(fg_chunks)
         {
             for (bg, fg) in bg_chunk
                 .chunks_exact_mut(4)
-                .zip(fg_chunk[..rounded_width].chunks_exact_mut(4))
+                .zip(fg_chunk[8 * 4..rounded_width * 4].chunks_exact_mut(4))
             {
                 if fg[3] != 0 {
                     for i in 0..4 {
                         fg[i] = ((fg[i] as f32 * layer.opacity as f32) / 100.0) as u8
                     }
 
-                    match layer.blending_mode {
-                        BlendingMode::Multiply => {
-                            for i in 0..4 {
-                                bg[i] = multiply(bg[i], fg[i], bg[3], fg[3])
-                            }
-                        }
-                        BlendingMode::Overlay => {
-                            for i in 0..4 {
-                                bg[i] = overlay(bg[i], fg[i], bg[3], fg[3])
-                            }
-                        }
-                        BlendingMode::Luminosity => {
-                            for i in 0..4 {
-                                bg[i] = luminosity(bg[i], fg[i])
-                            }
-                        }
-                        BlendingMode::Screen => {
-                            for i in 0..4 {
-                                bg[i] = screen(bg[i], fg[i])
-                            }
-                        }
+                    let manipulation = match layer.blending_mode {
+                        BlendingMode::Multiply => multiply,
+                        BlendingMode::Overlay => overlay,
+                        BlendingMode::Luminosity => |bg, fg, _, _| luminosity(bg, fg),
+                        BlendingMode::Screen => |bg, fg, _, _| screen(bg, fg),
                         // BlendingMode::PassThrough => todo!(),
                         // BlendingMode::Shade => todo!(),
                         // BlendingMode::LumiShade => todo!(),
                         // BlendingMode::Binary => todo!(),
-                        _ => {
-                            for i in 0..4 {
-                                bg[i] = normal(bg[i], fg[i], fg[3])
-                            }
-                        }
+                        _ => |bg, fg, _, fg_a| normal(bg, fg, fg_a),
+                    };
+
+                    for i in 0..4 {
+                        bg[i] = manipulation(bg[i], fg[i], bg[3], fg[3])
                     }
                 }
             }
         }
     }
 
-    // TODO: Crop to `canvas.width` x `canvas.height`.
-
-    let mut png = Encoder::new(
-        File::create(output)?,
-        rounded_width as u32,
-        rounded_height as u32,
-    );
+    let mut png = Encoder::new(File::create(output)?, canvas.width, canvas.height);
     png.set_color(png::ColorType::Rgba);
     png.set_depth(png::BitDepth::Eight);
 
