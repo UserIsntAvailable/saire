@@ -1,11 +1,28 @@
 #![allow(unused_variables)]
-#![feature(stmt_expr_attributes)]
+#![feature(stmt_expr_attributes, core_intrinsics)]
 
 use png::Encoder;
 use saire::{utils::pixel_ops::*, BlendingMode, LayerType, Result, SaiDocument};
 use std::{collections::HashSet, fs::File, path::PathBuf};
 
-// TODO: Clap
+// TODO: Instead of using `rotate_{left,right}` I could instead use `slice::ptr_rotate()`.
+
+#[inline]
+fn rotate_left(bytes: &mut [u8], mid: usize) {
+    bytes.rotate_left(mid);
+    let len = bytes.len();
+    bytes[len - mid..].fill(0);
+}
+
+#[inline]
+fn rotate_right(bytes: &mut [u8], mid: usize) {
+    bytes.rotate_left(mid);
+    bytes[..mid].fill(0);
+}
+
+// TODO: clap
+// TODO: indicatif
+// TODO: Benchmark the difference between `VecDeque` and `Vec`.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1).take(2);
 
@@ -27,18 +44,12 @@ fn main() -> Result<()> {
     let mut layers = doc.layers()?;
     laytbl.order(&mut layers);
 
-    // TODO: check:
-    //   clippling
-    //   blending_mode
-
-    // The `witdth` and `height` of layers are always rounded to the nearest multiple of 32.
-    let rounded_width = ((canvas.width & !0x1F) + 0x20) as usize;
-    let rounded_height = ((canvas.height & !0x1F) + 0x20) as usize;
-
+    let width = canvas.width as usize;
+    let height = canvas.height as usize;
     let mut no_visible: HashSet<u32> = HashSet::new();
-    let mut image_bytes = vec![0; (canvas.width * canvas.height as u32 * 4) as usize]; // TODO: VecDeque
+    let mut image_bytes = vec![0; width * height * 4];
 
-    // TODO: Move layer's pixels to match `Layer::bounds`.
+    // TODO: Sets can also apply a `BlendingMode` to its childs.
     for mut layer in layers
         .into_iter()
         // If a set is `visible = false`, all its children needs to be also `visible = false`.
@@ -61,18 +72,30 @@ fn main() -> Result<()> {
             .as_mut_slices()
             .0;
 
-        let fg_chunks = fg_bytes
-            .chunks_exact_mut(layer.bounds.width as usize * 4)
-            .skip(8)
-            .take(canvas.height as usize);
+        let layer_width_bytes = layer.bounds.width as usize * 4;
 
-        for (bg_chunk, fg_chunk) in image_bytes
-            .chunks_exact_mut(canvas.width as usize * 4)
-            .zip(fg_chunks)
-        {
+        if layer.bounds.y < 0 {
+            rotate_left(fg_bytes, layer.bounds.y.abs() as usize * layer_width_bytes)
+        } else {
+            rotate_right(fg_bytes, layer.bounds.y as usize * layer_width_bytes)
+        }
+
+        let fg_chunks = fg_bytes
+            .chunks_exact_mut(layer_width_bytes)
+            .skip(8)
+            .take(height);
+
+        for (bg_chunk, fg_chunk) in image_bytes.chunks_exact_mut(width * 4).zip(fg_chunks) {
+            // TODO: I could skip x placement if the whole chunk is full of 0s.
+            if layer.bounds.x < 0 {
+                rotate_left(fg_chunk, (layer.bounds.x.abs() as u32 * 4) as usize)
+            } else {
+                rotate_right(fg_chunk, (layer.bounds.x as u32 * 4) as usize)
+            }
+
             for (bg, fg) in bg_chunk
                 .chunks_exact_mut(4)
-                .zip(fg_chunk[8 * 4..rounded_width * 4].chunks_exact_mut(4))
+                .zip(fg_chunk[8 * 4..].chunks_exact_mut(4))
             {
                 if fg[3] != 0 {
                     for i in 0..4 {
@@ -84,6 +107,8 @@ fn main() -> Result<()> {
                         BlendingMode::Overlay => overlay,
                         BlendingMode::Luminosity => |bg, fg, _, _| luminosity(bg, fg),
                         BlendingMode::Screen => |bg, fg, _, _| screen(bg, fg),
+                        // TODO:
+                        //
                         // BlendingMode::PassThrough => todo!(),
                         // BlendingMode::Shade => todo!(),
                         // BlendingMode::LumiShade => todo!(),
@@ -99,7 +124,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let mut png = Encoder::new(File::create(output)?, canvas.width, canvas.height);
+    let mut png = Encoder::new(File::create(output)?, width as u32, height as u32);
     png.set_color(png::ColorType::Rgba);
     png.set_depth(png::BitDepth::Eight);
 
