@@ -42,7 +42,9 @@ impl<'a> InodeReader<'a> {
 
         loop {
             if let Some(ref mut reader) = self.file_reader {
-                if left_to_read + (reader.position() as usize) >= SAI_BLOCK_SIZE {
+                let position = reader.position() as usize;
+
+                if left_to_read + position >= SAI_BLOCK_SIZE {
                     // This will be the same as doing:
                     //
                     // let mut bytes = Vec::new();
@@ -50,7 +52,7 @@ impl<'a> InodeReader<'a> {
                     //
                     // However, preallocating the Vec should be faster, and also I can guaranteed
                     // that the exactly amount of bytes are being read.
-                    let mut bytes = vec![0; SAI_BLOCK_SIZE - reader.position() as usize];
+                    let mut bytes = vec![0; SAI_BLOCK_SIZE - position];
                     reader.read_exact(&mut bytes)?;
                     writer.write(&bytes)?;
 

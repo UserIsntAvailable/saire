@@ -264,7 +264,7 @@ fn build_tree(
             tree.begin_child(name);
             build_tree(tree, child.id, map, include_color, visible);
             tree.end_child();
-        } else if ty == LayerType::Layer {
+        } else if ty == LayerType::Regular {
             let name = if include_color {
                 name.truecolor(200, 200, 200).to_string()
             } else {
@@ -334,8 +334,8 @@ mod tests {
 
         use std::ops::Index;
 
-        assert_eq!(laytbl.index(2), &LayerType::Layer);
-        assert_eq!(laytbl.index_of(2).unwrap(), 0);
+        assert_eq!(laytbl.index(2), &LayerType::Regular);
+        assert_eq!(laytbl.order_of(2).unwrap(), 0);
         assert_eq!(laytbl.into_iter().count(), 1);
 
         Ok(())

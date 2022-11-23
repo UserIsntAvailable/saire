@@ -115,7 +115,8 @@ mod tests {
             }
 
             fn add_row(&self, inode: &Inode) {
-                let date = chrono::NaiveDateTime::from_timestamp(inode.timestamp() as i64, 0)
+                let date = chrono::NaiveDateTime::from_timestamp_opt(inode.timestamp() as i64, 0)
+                    .expect("timestamp is not out-of-bounds.")
                     .format("%Y-%m-%d");
 
                 self.table.borrow_mut().add_row(match inode.r#type() {

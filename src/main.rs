@@ -62,16 +62,10 @@ fn main() -> Result<()> {
                 }
             };
 
-            layer.visible && layer.r#type == LayerType::Layer
+            layer.visible && layer.r#type == LayerType::Regular
         })
     {
-        let fg_bytes = layer
-            .data
-            .as_mut()
-            .expect("LayerType::Layer")
-            .as_mut_slices()
-            .0;
-
+        let fg_bytes = layer.data.as_mut().expect("LayerType::Regular");
         let layer_width_bytes = layer.bounds.width as usize * 4;
 
         if layer.bounds.y < 0 {
