@@ -3,9 +3,9 @@ use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
 use std::{collections::HashMap, fs::File, mem::size_of, ops::Index, path::Path};
 
-/// Holds information about the `Layer`s that make up a SAI image.
+/// Holds information about the [`Layer`]s that make up a SAI image.
 ///
-/// This is used to keep track of 3 properties of a `Layer`:
+/// This is used to keep track of 3 properties of a [`Layer`]:
 ///
 /// - id
 /// - type
@@ -14,8 +14,11 @@ use std::{collections::HashMap, fs::File, mem::size_of, ops::Index, path::Path};
 /// Where order/rank refers to the index from `lowest` to `highest` where the layer is placed in the
 /// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
 ///
-/// To get the `type` of a `Layer`, you can use the `index()` ( [] ) method. To get the `order` of
-/// a `Layer`, you can use `order_of()`.
+/// To get the [`LayerType`], you can use [`index`]. To get the order of a [`Layer`], you can use
+/// [`order_of`].
+///
+/// [`index`]: LayerTable::index
+/// [`order_of`]: LayerTable::order_of
 ///
 /// # Examples
 ///
@@ -45,13 +48,13 @@ impl LayerTable {
         self.inner.keys().position(|v| *v == id)
     }
 
-    /// Modifies a `Vec<Layer>` to be ordered from `lowest` to `highest`.
+    /// Modifies a <code>[Vec]<[Layer]></code> to be ordered from `lowest` to `highest`.
     ///
-    /// If you ever wanna return to the original order you can sort the `Layer`s by id.
+    /// If you ever wanna return to the original order you can sort by [`Layer::id`].
     ///
     /// # Panics
     ///
-    /// - If any of the of the `Layer::id`s is not available in the `LayerTable`.
+    /// - If any of the of the [`Layer::id`]'s is not available in the [`LayerTable`].
     pub fn order(&self, layers: &mut Vec<Layer>) {
         let keys = self
             .inner
@@ -92,7 +95,7 @@ impl TryFrom<&mut InodeReader<'_>> for LayerTable {
 impl Index<u32> for LayerTable {
     type Output = LayerType;
 
-    /// Gets the `LayerType` of the specified layer `id`.
+    /// Gets the [`LayerType`] of the specified layer `id`.
     ///
     /// # Panics
     ///
@@ -223,58 +226,65 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
 
 /// Rectangular bounds
 ///
-/// Can be off-canvas or larger than canvas if the user moves the layer outside of the "canvas
-/// window" without cropping; similar to photoshop 0,0 is top-left corner of image.
+/// Can be off-canvas or larger than canvas if the user moves the layer outside of the `canvas window`
+/// without cropping; similar to `Photoshop` 0,0 is top-left corner of image.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
-    /// Can be negative, rounded to nearest multiple of 32
     pub x: i32,
-    /// Can be negative, rounded to nearest multiple of 32
     pub y: i32,
 
+    /// Always rounded to nearest multiple of 32.
     pub width: u32,
+    /// Always rounded to nearest multiple of 32.
     pub height: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
     pub r#type: LayerType,
+    /// The identifier of the layer.
     pub id: u32,
     pub bounds: LayerBounds,
-    /// Value ranging from 100 to 0 to determinate the opacity of the `Layer`.
+    /// Value ranging from `100` to `0`.
     pub opacity: u8,
-    /// Whether or not this `Layer` is visible.
+    /// Whether or not this layer is visible.
     ///
-    /// If `LayerType::Set` is `visible = false`, all its children will also be `visible = false`.
+    /// If a [`LayerType::Set`] is not visible, all its children will also be not be visible.
     pub visible: bool,
-    /// If true, locks transparent pixels, so that you can only paint in pixels that are opaque.
+    /// If [`true`], locks transparent pixels, so that you can only paint in pixels that are opaque.
     pub preserve_opacity: bool,
     pub clipping: bool,
     pub blending_mode: BlendingMode,
 
     /// The name of the layer.
+    ///
+    /// It is always safe to [`unwrap`] if [`LayerType::Regular`].
+    ///
+    /// [`unwrap`]: Option::unwrap
     pub name: Option<String>,
-    /// If this layer is a child of a folder this will be a layer ID of the parent container layer.
+    /// If this layer is a child of a [`LayerType::Set`], this will be the layer id of that
+    /// [`LayerType::Set`].
     pub parent_set: Option<u32>,
-    /// If this layer is a child of another layer(ex, a mask-layer) this will be a layer ID of the
-    /// parent container layer.
+    /// If this layer is a child of another layer (i.e: a [`LayerType::Mask`]), this will be the
+    /// layer id of the parent container layer.
     pub parent_layer: Option<u32>,
-    /// Present only in a layer that is a Set/Folder. A single bool variable for if the folder is
-    /// expanded within the layers panel or not.
+    /// Wether or not a [`LayerType::Set`] is expanded within the layers panel or not.
     pub open: Option<bool>,
-    /// Name of the overlay-texture assigned to a layer. Ex: `Watercolor A` Only appears in layers
-    /// that have an overlay enabled
+    /// Name of the overlay-texture assigned to a layer. i.e: `Watercolor A`. Only appears in layers
+    /// that have an overlay enabled.
     pub texture_name: Option<String>,
     pub texture_scale: Option<u16>,
     pub texture_opacity: Option<u8>,
-    // TODO: peff stream
-
-    // The additional data of the `Layer`. If the layer is a folder or set, there is no additional
-    // data. If the layer is `LayerType::Regular` then data will hold pixels in the RGBA color model.
-    //
-    // For now, others `LayerType`s will not include additional data.
+    /// The additional data of the layer.
+    ///
+    /// If the layer is [`LayerType::Set`], there is no additional data. If the layer is
+    /// [`LayerType::Regular`] then data will hold pixels in the RGBA color model with
+    /// pre-multiplied alpha.
+    ///
+    /// For now, others [`LayerType`]s will not include their additional data.
     pub data: Option<Vec<u8>>,
+    // TODO: peff stream
 }
 
 impl Layer {
@@ -368,7 +378,7 @@ impl Layer {
     }
 
     #[cfg(feature = "png")]
-    /// Gets a png image from the underlying `Layer` data.
+    /// Gets a png image from the underlying layer data.
     ///
     /// # Examples
     ///
@@ -390,7 +400,7 @@ impl Layer {
     ///
     /// # Panics
     ///
-    /// - If invoked with a `Layer` with a type other than `[LayerType::Regular]`.
+    /// - If invoked with a layer with a type other than [`LayerType::Regular`].
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
         use crate::utils::pixel_ops::premultiplied_to_straight;
 
