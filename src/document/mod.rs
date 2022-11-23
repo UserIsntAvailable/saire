@@ -118,18 +118,12 @@ pub struct SaiDocument {
 // Sadly, you can't just put /// on top of the macro call to set documentation on it. I guess I
 // could pass the documentation as a parameter on the macro, but that will be kinda ugly...
 
-macro_rules! file_read {
-    ($self:ident, $return_type:ty, $file_name:literal) => {{
-        let file = $self.traverse_until($file_name)?;
-        let mut reader = InodeReader::new(&$self.fs, &file);
-        <$return_type>::try_from(&mut reader)
-    }};
-}
-
 macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
-            file_read!(self, $return_type, $file_name)
+            let file = self.traverse_until($file_name)?;
+            let mut reader = InodeReader::new(&self.fs, &file);
+            <$return_type>::try_from(&mut reader)
         }
     };
 }
@@ -144,7 +138,6 @@ macro_rules! layers_method {
 
 macro_rules! layers_no_decompress_method {
     ($method_name:ident, $layer_name:literal) => {
-        // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
         fn $method_name(&self) -> $crate::Result<Vec<Layer>> {
             self.get_layers($layer_name, false)
         }
@@ -221,9 +214,10 @@ impl SaiDocument {
     layers_method!(sublayers, "sublayers", true);
 
     // This methods are private for the moment.
+    //
+    // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
 
     layers_no_decompress_method!(layers_no_decompress, "layers");
-    // TODO: I can't parse `LayerType::Mask` yet.
     layers_no_decompress_method!(sublayers_no_decompress, "sublayers");
 }
 
@@ -244,34 +238,31 @@ fn build_tree(
     use colored::Colorize;
 
     for child in &map[&index] {
-        let ty = child.r#type;
         let visible = child.visible && visible_parent;
-        let name = child.name.as_ref().unwrap().to_string();
+        let mut name = child.name.as_ref().unwrap().to_string();
 
-        let name = if include_color && !visible {
-            name.truecolor(69, 69, 69).italic().to_string()
-        } else {
-            name
-        };
+        if include_color && !visible {
+            name = name.truecolor(69, 69, 69).italic().to_string()
+        }
 
-        if ty == LayerType::Set {
-            let name = if include_color {
-                name.truecolor(222, 222, 222).bold().to_string()
-            } else {
-                name
-            };
+        match child.r#type {
+            LayerType::Regular | LayerType::Linework => {
+                if include_color {
+                    name = name.truecolor(200, 200, 200).to_string()
+                }
 
-            tree.begin_child(name);
-            build_tree(tree, child.id, map, include_color, visible);
-            tree.end_child();
-        } else if ty == LayerType::Regular {
-            let name = if include_color {
-                name.truecolor(200, 200, 200).to_string()
-            } else {
-                name
-            };
+                tree.add_empty_child(name);
+            }
+            LayerType::Set => {
+                if include_color {
+                    name = name.truecolor(222, 222, 222).bold().to_string()
+                }
 
-            tree.add_empty_child(name);
+                tree.begin_child(name);
+                build_tree(tree, child.id, map, include_color, visible);
+                tree.end_child();
+            }
+            _ => (),
         }
     }
 }
