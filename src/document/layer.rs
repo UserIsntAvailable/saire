@@ -1,11 +1,7 @@
-use crate::FormatError;
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
+use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
-use std::collections::{HashMap, VecDeque};
-use std::fs::File;
-use std::mem::size_of;
-use std::ops::Index;
-use std::path::Path;
+use std::{collections::HashMap, fs::File, mem::size_of, ops::Index, path::Path};
 
 /// Holds information about the `Layer`s that make up a SAI image.
 ///
@@ -19,7 +15,7 @@ use std::path::Path;
 /// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
 ///
 /// To get the `type` of a `Layer`, you can use the `index()` ( [] ) method. To get the `order` of
-/// a `Layer`, you can use `index_of()`.
+/// a `Layer`, you can use `order_of()`.
 ///
 /// # Examples
 ///
@@ -32,24 +28,24 @@ use std::path::Path;
 ///     let laytbl = doc.laytbl()?;
 ///     
 ///     // id = 2 is `usually` the first layer.
-///     assert_eq!(laytbl.index_of(2), Some(0));
+///     assert_eq!(laytbl.order_of(2), Some(0));
 ///
 ///     Ok(())
 /// }
 /// ```
 pub struct LayerTable {
-    // Using a `LinkedHashMap`, because this is probably the way how SYSTEMAX implement it.
+    // Using a `LinkedHashMap`, because this is probably the way how SYSTEMAX implements it.
     /// Maps the identifier of a `Layer` to its position from bottom to top.
     inner: LinkedHashMap<u32, LayerType>,
 }
 
 impl LayerTable {
-    /// Gets the index of a specified `key`.
-    pub fn index_of(&self, key: u32) -> Option<usize> {
-        self.inner.keys().position(|v| *v == key)
+    /// Gets the order of the specified layer `id`.
+    pub fn order_of(&self, id: u32) -> Option<usize> {
+        self.inner.keys().position(|v| *v == id)
     }
 
-    /// Modifies a `Vec<Layer>` to follow the order from `lowest` to `highest`.
+    /// Modifies a `Vec<Layer>` to be ordered from `lowest` to `highest`.
     ///
     /// If you ever wanna return to the original order you can sort the `Layer`s by id.
     ///
@@ -83,7 +79,7 @@ impl TryFrom<&mut InodeReader<'_>> for LayerTable {
                     // Gets sent as windows message 0x80CA for some reason.
                     //
                     // 1       if LayerType::Set.
-                    // 157/158 if LayerType::Layer.
+                    // 157/158 if LayerType::Regular.
                     let _: u16 = reader.read_as_num();
 
                     Ok((id, r#type))
@@ -134,8 +130,8 @@ impl IntoIterator for LayerTable {
 pub enum LayerType {
     /// Canvas pseudo-layer.
     RootLayer = 0x00,
-    /// Regular Layer.
-    Layer = 0x03,
+    /// Basic Layer.
+    Regular = 0x03,
     _Unknown4 = 0x04,
     /// Vector Linework Layer.
     Linework = 0x05,
@@ -146,13 +142,14 @@ pub enum LayerType {
     Set = 0x08,
 }
 
+#[doc(hidden)]
 impl LayerType {
     fn new(value: u16) -> Result<Self> {
         use LayerType::*;
 
         match value {
             0 => Ok(RootLayer),
-            3 => Ok(Layer),
+            3 => Ok(Regular),
             4 => Ok(_Unknown4),
             5 => Ok(Linework),
             6 => Ok(Mask),
@@ -176,6 +173,7 @@ impl TryFrom<u32> for LayerType {
     }
 }
 
+#[doc(hidden)]
 impl TryFrom<u16> for LayerType {
     type Error = Error;
 
@@ -273,12 +271,10 @@ pub struct Layer {
     // TODO: peff stream
 
     // The additional data of the `Layer`. If the layer is a folder or set, there is no additional
-    // data. If the layer is `LayerType::Layer` then data will hold pixels in the RGBA color model.
+    // data. If the layer is `LayerType::Regular` then data will hold pixels in the RGBA color model.
     //
     // For now, others `LayerType`s will not include additional data.
-    //
-    // The VecDeque has been already `make_continous()`ed.
-    pub data: Option<VecDeque<u8>>,
+    pub data: Option<Vec<u8>>,
 }
 
 impl Layer {
@@ -286,7 +282,7 @@ impl Layer {
         let r#type: u32 = reader.read_as_num();
         let id: u32 = reader.read_as_num();
 
-        // SAFETY: LayersBounds is `#[repr(C)]` so that memory layout is aligned.
+        // SAFETY: LayersBounds is `#[repr(C)]` so that the memory layout is aligned.
         let bounds: LayerBounds = unsafe { reader.read_as() };
 
         let _: u32 = reader.read_as_num();
@@ -313,7 +309,7 @@ impl Layer {
             // SAFETY: tag guarantees to have valid UTF-8 ( ASCII more specifically ).
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "name" => {
-                    // SAFETY: this is casting a *const u8 -> *const u8.
+                    // SAFETY: casting a *const u8 -> *const u8.
                     let buf: [u8; 256] = unsafe { reader.read_as() };
 
                     let buf = buf.splitn(2, |c| c == &0).next().unwrap();
@@ -323,10 +319,10 @@ impl Layer {
                 "plid" => parent_layer = reader.read_as_num::<u32>().into(),
                 "fopn" => open = (reader.read_as_num::<u8>() == 1).into(),
                 "texn" => {
-                    // SAFETY: this is casting a *const u8 -> *const u8.
+                    // SAFETY: casting a *const u8 -> *const u8.
                     let buf: [u8; 64] = unsafe { reader.read_as() };
 
-                    // SAFETY: `buf` is a valid pointer.
+                    // SAFETY: buf is a valid pointer.
                     let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
 
                     texture_name = String::from_utf16_lossy(buf.as_slice()).into()
@@ -341,7 +337,7 @@ impl Layer {
 
         let r#type: LayerType = r#type.try_into()?;
 
-        let data = if decompress_layer_data && r#type == LayerType::Layer {
+        let data = if decompress_layer_data && r#type == LayerType::Regular {
             Some(decompress_layer(
                 bounds.width as usize,
                 bounds.height as usize,
@@ -383,7 +379,7 @@ impl Layer {
     ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
     ///     let layer = &layers[0];
     ///
-    ///     if layer.r#type == LayerType::Layer {
+    ///     if layer.r#type == LayerType::Regular {
     ///         // if path is `None` it will save the file at ./{id}-{name}.png
     ///         layer.to_png(Some("layer-0.png"))?;
     ///     }
@@ -394,12 +390,12 @@ impl Layer {
     ///
     /// # Panics
     ///
-    /// - If invoked with a `Layer` with a type other than `[LayerType::Layer]`.
+    /// - If invoked with a `Layer` with a type other than `[LayerType::Regular]`.
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
         use crate::utils::pixel_ops::premultiplied_to_straight;
 
         if let Some(ref image_data) = self.data {
-            let png = create_png(
+            return Ok(create_png(
                 path.map_or_else(
                     || {
                         Ok::<File, Error>(File::create(format!(
@@ -412,18 +408,12 @@ impl Layer {
                 )?,
                 self.bounds.width,
                 self.bounds.height,
-            );
-
-            Ok(png.write_header()?.write_image_data(
-                &premultiplied_to_straight(image_data.as_slices().0).as_slice(),
-            )?)
-        } else {
-            if self.r#type == LayerType::Layer {
-                unreachable!("users can't not skip layer data yet.")
-            } else {
-                panic!("For now, `saire` can only decompress `LayerType::Layer` data.")
-            }
+            )
+            .write_header()?
+            .write_image_data(&premultiplied_to_straight(image_data))?);
         }
+
+        panic!("For now, saire can only decompress LayerType::Regular data.");
     }
 }
 
@@ -468,11 +458,7 @@ fn rle_decompress_stride(
     }
 }
 
-fn decompress_layer(
-    width: usize,
-    height: usize,
-    reader: &mut InodeReader<'_>,
-) -> Result<VecDeque<u8>> {
+fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -> Result<Vec<u8>> {
     let coord_to_index = |x, y, stride| (x + (y * stride));
 
     const TILE_SIZE: usize = 32;
@@ -483,7 +469,6 @@ fn decompress_layer(
     let mut tile_map = vec![0; y_tiles * x_tiles];
     reader.read_exact(&mut tile_map)?;
 
-    // TODO: implement using VecDeque.
     let mut image_bytes = vec![0; width * height * 4];
     let mut decompressed_rle = [0; SAI_BLOCK_SIZE];
     let mut compressed_rle = [0; SAI_BLOCK_SIZE / 2];
@@ -515,30 +500,20 @@ fn decompress_layer(
 
             let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
 
-            for (i, chunk) in (0..).zip(decompressed_rle.chunks_exact_mut(4)) {
+            // Leave pre-multiplied.
+            for (i, chunk) in decompressed_rle.chunks_exact_mut(4).enumerate() {
                 // BGRA -> RGBA.
                 chunk.swap(0, 2);
 
-                // Alpha is pre-multiplied, convert to straight. Get Alpha into
-                // [0.0, 1.0] range.
-                let scale = chunk[3] as f32 / 255.0;
-
-                // Normalize RGB values, and leave alpha as it is.
-                for (i, (dst, src)) in dest
-                    [coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
+                for (dst, src) in dest[coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
                     .iter_mut()
                     .zip(chunk)
-                    .enumerate()
                 {
-                    *dst = if i != 3 {
-                        (*src as f32 * scale).round() as u8
-                    } else {
-                        *src
-                    }
+                    *dst = *src
                 }
             }
         }
     }
 
-    Ok(image_bytes.into())
+    Ok(image_bytes)
 }
