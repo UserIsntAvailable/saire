@@ -22,7 +22,6 @@ fn rotate_right(bytes: &mut [u8], mid: usize) {
 
 // TODO: clap
 // TODO: indicatif
-// TODO: Benchmark the difference between `VecDeque` and `Vec`.
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1).take(2);
 
@@ -49,7 +48,7 @@ fn main() -> Result<()> {
     let mut no_visible: HashSet<u32> = HashSet::new();
     let mut image_bytes = vec![0; width * height * 4];
 
-    // TODO: Sets can also apply a `BlendingMode` to its childs.
+    // TODO: `LayerType::Set`s can also apply a `BlendingMode` to its childs.
     for mut layer in layers
         .into_iter()
         // If a set is `visible = false`, all its children needs to be also `visible = false`.
