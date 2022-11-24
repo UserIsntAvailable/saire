@@ -6,17 +6,17 @@ use crate::block::{
 use crate::Result;
 use num_traits::Num;
 use std::{
-    io::{BufWriter, Cursor, Read, Write},
+    io::{BufWriter, Write},
     mem::size_of,
 };
 
 /// Reads the contents of an `InodeType::File`.
 pub(crate) struct InodeReader<'a> {
-    /// Will be None if no read*() calls have been made; Also, if the file that we are reading from
-    /// doesn't have no more bytes to be read.
+    /// [`None`] if the file that we are reading from doesn't have more bytes to be read.
+    buf: Option<BlockBuffer>,
     cur_block: Option<u32>,
-    file_reader: Option<Cursor<BlockBuffer>>,
     fs: &'a FileSystemReader,
+    position: usize,
 }
 
 impl<'a> InodeReader<'a> {
@@ -24,9 +24,10 @@ impl<'a> InodeReader<'a> {
         debug_assert!(inode.r#type() == &InodeType::File);
 
         Self {
+            buf: None,
             cur_block: Some(inode.next_block()),
-            file_reader: None,
             fs,
+            position: 0,
         }
     }
 
@@ -41,39 +42,30 @@ impl<'a> InodeReader<'a> {
         let mut writer = BufWriter::new(buffer);
 
         loop {
-            if let Some(ref mut reader) = self.file_reader {
-                let position = reader.position() as usize;
-
-                if left_to_read + position >= SAI_BLOCK_SIZE {
-                    // This will be the same as doing:
-                    //
-                    // let mut bytes = Vec::new();
-                    // reader.read_to_end(&mut bytes).unwrap();
-                    //
-                    // However, preallocating the Vec should be faster, and also I can guaranteed
-                    // that the exactly amount of bytes are being read.
-                    let mut bytes = vec![0; SAI_BLOCK_SIZE - position];
-                    reader.read_exact(&mut bytes)?;
-                    writer.write(&bytes)?;
-
-                    self.file_reader = None;
-                    left_to_read -= bytes.len();
+            if let Some(ref mut buf) = self.buf {
+                let (to_read, done_reading) = if left_to_read + self.position >= SAI_BLOCK_SIZE {
+                    (SAI_BLOCK_SIZE - self.position, false)
                 } else {
-                    let mut bytes = vec![0; left_to_read];
-                    reader.read_exact(&mut bytes)?;
-                    writer.write(&bytes)?;
+                    (left_to_read, true)
+                };
 
+                writer.write(&buf[self.position..self.position + to_read])?;
+
+                if done_reading {
+                    self.position += to_read;
                     break;
                 }
-            } else {
-                if let Some(cur_block) = self.cur_block {
-                    let (datablock, next_block) = self.fs.read_data(cur_block as usize);
 
-                    self.file_reader = Some(Cursor::new(datablock.as_bytes().to_owned()));
-                    self.cur_block = next_block;
-                } else {
-                    panic!("End of file.");
-                }
+                self.buf = None;
+                self.position = 0;
+                left_to_read -= to_read;
+            } else if let Some(cur_block) = self.cur_block {
+                let (data_block, next_block) = self.fs.read_data(cur_block as usize);
+
+                self.buf = Some(data_block.as_bytes().to_owned());
+                self.cur_block = next_block;
+            } else {
+                panic!("End of file.");
             }
         }
 

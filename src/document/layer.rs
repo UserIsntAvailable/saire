@@ -310,21 +310,16 @@ impl Layer {
                 "name" => {
                     // SAFETY: casting a *const u8 -> *const u8.
                     let buf: [u8; 256] = unsafe { reader.read_as() };
-
-                    let buf = buf.splitn(2, |c| c == &0).next().unwrap();
+                    let buf = buf.splitn(2, |c| *c == 0).next().unwrap();
                     name = String::from_utf8_lossy(buf).to_string().into();
                 }
                 "pfid" => parent_set = reader.read_as_num::<u32>().into(),
                 "plid" => parent_layer = reader.read_as_num::<u32>().into(),
-                "fopn" => open = (reader.read_as_num::<u8>() == 1).into(),
+                "fopn" => open = (reader.read_as_num::<u8>() >= 1).into(),
                 "texn" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 64] = unsafe { reader.read_as() };
-
-                    // SAFETY: buf is a valid pointer.
-                    let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
-
-                    texture_name = String::from_utf16_lossy(buf.as_slice()).into()
+                    // SAFETY: casting between primitives.
+                    let buf: [u16; 32] = unsafe { reader.read_as() };
+                    texture_name = String::from_utf16_lossy(buf.as_slice()).into();
                 }
                 "texp" => {
                     texture_scale = reader.read_as_num::<u16>().into();
@@ -474,13 +469,13 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
 
     for y in 0..y_tiles {
         for x in 0..x_tiles {
-            // inactive tile.
+            // Inactive tile.
             if tile_map[coord_to_index(x, y, x_tiles)] == 0 {
                 continue;
             }
 
             // Reads BGRA channels. Skip the next 4 ( unknown ).
-            (0..8).try_for_each(|channel| {
+            for channel in 0..8 {
                 let size: usize = reader.read_as_num::<u16>().into();
 
                 debug_assert!(size <= compressed_rle.len());
@@ -495,21 +490,17 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
                         channel,
                     );
                 }
-
-                Ok::<_, Error>(())
-            })?;
+            }
 
             let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
 
             // Leave pre-multiplied.
-            //
-            for (i, chunk) in decompressed_rle.chunks_exact_mut(4).enumerate() {
-                // BGRA -> RGBA.
-                chunk.swap(0, 2);
+            for (i, bgra) in decompressed_rle.chunks_exact_mut(4).enumerate() {
+                bgra.swap(0, 2);
 
                 for (dst, src) in dest[coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
                     .iter_mut()
-                    .zip(chunk)
+                    .zip(bgra)
                 {
                     *dst = *src
                 }
