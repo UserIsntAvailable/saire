@@ -31,7 +31,7 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
         let width: u32 = reader.read_as_num();
         let height: u32 = reader.read_as_num();
 
-        // SAFETY: `c_uchar` is an alias of `u8`.
+        // SAFETY: c_uchar is an alias of u8.
         let magic: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
 
         // BM32

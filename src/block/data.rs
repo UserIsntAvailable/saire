@@ -37,16 +37,16 @@ impl Inode {
     /// The name of the inode.
     pub(crate) fn name(&self) -> &str {
         let name = self.name.as_ptr();
-        // SAFETY: `name` is a valid pointer.
+        // SAFETY: name is a valid pointer.
         //
-        // - `self.data` is contiguous, because it is an array of `u32`s.
+        // - `name` is contiguous, because it is an array of `u32`s.
         //
         // - the total size of the slice is always guaranteed to be of length 32.
         //
-        // - slice ( the return value ), will not be modified, since it is not a &mut.
+        // - slice ( the return value ), should not be modified.
         let slice = unsafe { std::slice::from_raw_parts(name, 32) };
 
-        // SAFETY: `self.name` guarantees to have valid `utf8` ( ASCII ) values.
+        // SAFETY: name guarantees to have valid UTF-8 ( ASCII ) values.
         let str = unsafe { std::str::from_utf8_unchecked(slice) };
 
         // stops at the first NULL character to make '==' easier on the rust side.
@@ -109,24 +109,14 @@ impl DataBlock {
     pub(crate) fn as_bytes(&self) -> &BlockBuffer {
         let ptr = self.u32.as_ptr();
 
-        // SAFETY: `ptr` is a valid pointer.
-        //
-        // - It can't be null.
-        //
-        // - The data is not dangling.
+        // SAFETY: ptr is a valid pointer.
         unsafe { &*(ptr as *const BlockBuffer) }
     }
 
     pub(crate) fn as_inodes(&self) -> &InodeBuffer {
         let ptr = self.u32.as_ptr();
 
-        // SAFETY: `ptr` is a valid pointer.
-        //
-        // - It can't be null.
-        //
-        // - The data is not dangling.
-        //
-        // - `Inode` is `#[repr(C)]` so that the memory layout is aligned.
+        // SAFETY: ptr is a valid pointer and Inode is #[repr(C)].
         unsafe { &*(ptr as *const InodeBuffer) }
     }
 }

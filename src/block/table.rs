@@ -27,13 +27,7 @@ impl TableBlock {
 
         let ptr = data.as_ptr();
 
-        // SAFETY: `ptr` is a valid pointer.
-        //
-        // - It can't be null.
-        //
-        // - The data is not dangling.
-        //
-        // - `TableEntry` is `#[repr(C)]` so that the memory layout is aligned.
+        // SAFETY: ptr is a valid pointer and TableEntry is #[repr(C)].
         let entries = unsafe { *(ptr as *const TableEntryBuffer) };
 
         // Setting the first checksum to 0 and calculating the checksum of the entire table produces

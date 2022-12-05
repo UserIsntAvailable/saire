@@ -56,9 +56,9 @@ fn to_u32(bytes: &[u8]) -> DecryptedBuffer {
 
     let bytes = bytes.as_ptr() as *const u32;
 
-    // SAFETY: `bytes` is a valid pointer.
+    // SAFETY: bytes is a valid pointer.
     //
-    // - the `bytes` is contiguous, because it is an array of `u8`s.
+    // - `bytes` contains contiguous data, because it is an array of `u8`s.
     //
     // - since `bytes.len` needs to be equal to `SAI_BLOCK_SIZE`, then size for the slice needs
     // to be `SAI_BLOCK_SIZE / 4` ( DATA_SIZE ), because u32 is 4 times bigger than a u8.

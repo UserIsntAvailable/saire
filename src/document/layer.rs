@@ -1,7 +1,7 @@
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
 use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
-use std::{collections::HashMap, fs::File, mem::size_of, ops::Index, path::Path};
+use std::{collections::HashMap, convert::TryInto, fs::File, mem::size_of, ops::Index, path::Path};
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
 ///
@@ -208,7 +208,7 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
         use BlendingMode::*;
 
         #[rustfmt::skip]
-        // SAFETY: bytes guarantees to have valid utf8 ( ASCII ) values.
+        // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
         match unsafe { std::str::from_utf8_unchecked(&bytes) } {
             "pass" => Ok(PassThrough),
             "norm" => Ok(Normal),
@@ -227,7 +227,7 @@ impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
 /// Rectangular bounds
 ///
 /// Can be off-canvas or larger than canvas if the user moves the layer outside of the `canvas window`
-/// without cropping; similar to `Photoshop` 0,0 is top-left corner of image.
+/// without cropping; similar to `Photoshop`, 0:0 is top-left corner of image.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
@@ -289,10 +289,10 @@ pub struct Layer {
 
 impl Layer {
     pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
-        let r#type: u32 = reader.read_as_num();
+        let r#type: LayerType = reader.read_as_num::<u32>().try_into()?;
         let id: u32 = reader.read_as_num();
 
-        // SAFETY: LayersBounds is `#[repr(C)]` so that the memory layout is aligned.
+        // SAFETY: LayersBounds is #[repr(C)].
         let bounds: LayerBounds = unsafe { reader.read_as() };
 
         let _: u32 = reader.read_as_num();
@@ -302,62 +302,11 @@ impl Layer {
         let clipping: bool = reader.read_as_num::<u8>() >= 1;
         let _: u8 = reader.read_as_num();
 
-        // SAFETY: `c_uchar` is an alias of `u8`.
+        // SAFETY: c_uchar is an alias of u8.
         let blending_mode: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
         let blending_mode: BlendingMode = blending_mode.try_into()?;
 
-        let mut name: Option<String> = None;
-        let mut parent_set: Option<u32> = None;
-        let mut parent_layer: Option<u32> = None;
-        let mut open: Option<bool> = None;
-        let mut texture_name: Option<String> = None;
-        let mut texture_scale: Option<u16> = None;
-        let mut texture_opacity: Option<u8> = None;
-
-        // SAFETY: all fields have been read.
-        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII more specifically ).
-            match unsafe { std::str::from_utf8_unchecked(&tag) } {
-                "name" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 256] = unsafe { reader.read_as() };
-
-                    let buf = buf.splitn(2, |c| c == &0).next().unwrap();
-                    name = String::from_utf8_lossy(buf).to_string().into();
-                }
-                "pfid" => parent_set = reader.read_as_num::<u32>().into(),
-                "plid" => parent_layer = reader.read_as_num::<u32>().into(),
-                "fopn" => open = (reader.read_as_num::<u8>() == 1).into(),
-                "texn" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 64] = unsafe { reader.read_as() };
-
-                    // SAFETY: buf is a valid pointer.
-                    let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
-
-                    texture_name = String::from_utf16_lossy(buf.as_slice()).into()
-                }
-                "texp" => {
-                    texture_scale = reader.read_as_num::<u16>().into();
-                    texture_opacity = reader.read_as_num::<u8>().into();
-                }
-                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
-            }
-        }
-
-        let r#type: LayerType = r#type.try_into()?;
-
-        let data = if decompress_layer_data && r#type == LayerType::Regular {
-            Some(decompress_layer(
-                bounds.width as usize,
-                bounds.height as usize,
-                reader,
-            )?)
-        } else {
-            None
-        };
-
-        Ok(Self {
+        let mut layer = Self {
             r#type,
             id,
             bounds,
@@ -366,15 +315,54 @@ impl Layer {
             preserve_opacity,
             clipping,
             blending_mode,
-            name,
-            parent_set,
-            parent_layer,
-            open,
-            texture_name,
-            texture_scale,
-            texture_opacity,
-            data,
-        })
+            name: None,
+            parent_set: None,
+            parent_layer: None,
+            open: None,
+            texture_name: None,
+            texture_scale: None,
+            texture_opacity: None,
+            data: None,
+        };
+
+        // SAFETY: all fields have been read.
+        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
+            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
+            match unsafe { std::str::from_utf8_unchecked(&tag) } {
+                "name" => {
+                    // SAFETY: casting a *const u8 -> *const u8.
+                    let buf: [u8; 256] = unsafe { reader.read_as() };
+
+                    let buf = buf.splitn(2, |c| c == &0).next().unwrap();
+                    let _ = layer.name.insert(String::from_utf8_lossy(buf).into());
+                }
+                "pfid" => drop(layer.parent_set.insert(reader.read_as_num())),
+                "plid" => drop(layer.parent_layer.insert(reader.read_as_num())),
+                "fopn" => drop(layer.open.insert(reader.read_as_num::<u8>() >= 1)),
+                "texn" => {
+                    // SAFETY: casting a *const u8 -> *const u8.
+                    let buf: [u8; 64] = unsafe { reader.read_as() };
+
+                    // SAFETY: buf is a valid pointer.
+                    let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
+                    let _ = layer
+                        .texture_name
+                        .insert(String::from_utf16_lossy(buf.as_slice()));
+                }
+                "texp" => {
+                    let _ = layer.texture_scale.insert(reader.read_as_num());
+                    let _ = layer.texture_opacity.insert(reader.read_as_num());
+                }
+                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
+            }
+        }
+
+        if decompress_layer_data && r#type == LayerType::Regular {
+            let data = decompress_layer(bounds.width as usize, bounds.height as usize, reader)?;
+            let _ = layer.data.insert(data);
+        };
+
+        Ok(layer)
     }
 
     #[cfg(feature = "png")]

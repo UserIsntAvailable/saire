@@ -54,41 +54,39 @@ impl TryFrom<&mut InodeReader<'_>> for Canvas {
         let width: u32 = reader.read_as_num();
         let height: u32 = reader.read_as_num();
 
-        let mut dots_per_inch: Option<f32> = None;
-        let mut size_unit: Option<SizeUnit> = None;
-        let mut resolution_unit: Option<ResolutionUnit> = None;
-        let mut selection_source: Option<u32> = None;
-        let mut selected_layer: Option<u32> = None;
+        let mut canvas = Self {
+            alignment,
+            width,
+            height,
+            dots_per_inch: None,
+            size_unit: None,
+            resolution_unit: None,
+            selection_source: None,
+            selected_layer: None,
+        };
 
         // SAFETY: all fields have been read.
         while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII more specifically ).
+            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "reso" => {
                     // Conversion from 16.16 fixed point integer to a float.
-                    dots_per_inch = (reader.read_as_num::<u32>() as f32 / 65536f32).into();
+                    let _ = canvas
+                        .dots_per_inch
+                        .insert(reader.read_as_num::<u32>() as f32 / 65536f32);
 
-                    // SAFETY: `SizeUnit` is `#[repr(u16)]`.
-                    size_unit = unsafe { reader.read_as::<SizeUnit>() }.into();
+                    // SAFETY: SizeUnit is #[repr(u16)].
+                    let _ = canvas.size_unit.insert(unsafe { reader.read_as() });
 
-                    // SAFETY: `ResolutionUnit` is `#[repr(u16)]`.
-                    resolution_unit = unsafe { reader.read_as::<ResolutionUnit>() }.into();
+                    // SAFETY: ResolutionUnit is #[repr(u16)].
+                    let _ = canvas.resolution_unit.insert(unsafe { reader.read_as() });
                 }
-                "wsrc" => selection_source = reader.read_as_num::<u32>().into(),
-                "layr" => selected_layer = reader.read_as_num::<u32>().into(),
+                "wsrc" => drop(canvas.selection_source.insert(reader.read_as_num())),
+                "layr" => drop(canvas.selected_layer.insert(reader.read_as_num())),
                 _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
             }
         }
 
-        Ok(Self {
-            alignment,
-            width,
-            height,
-            dots_per_inch,
-            size_unit,
-            resolution_unit,
-            selection_source,
-            selected_layer,
-        })
+        Ok(canvas)
     }
 }

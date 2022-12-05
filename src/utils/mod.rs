@@ -135,10 +135,7 @@ pub(crate) mod ptree {
         Ok(())
     }
 
-    pub(crate) fn write_tree(
-        tree: StringItem,
-        f: &mut Formatter<'_>,
-    ) -> io::Result<()> {
+    pub(crate) fn write_tree(tree: StringItem, f: &mut Formatter<'_>) -> io::Result<()> {
         let config = PrintConfig::from_env();
 
         let (branch_style, leaf_style) = if config.should_style_output(OutputKind::Unknown) {
