@@ -1,7 +1,7 @@
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
 use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
-use std::{collections::HashMap, convert::TryInto, fs::File, mem::size_of, ops::Index, path::Path};
+use std::{cmp::Ordering, collections::HashMap, fs::File, ops::Index, path::Path};
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
 ///
@@ -415,43 +415,38 @@ impl Layer {
     }
 }
 
-// TODO: There should be a better way to write this...
-fn rle_decompress_stride(
-    dest: &mut [u8],
-    src: &[u8],
-    stride: usize,
-    stride_count: usize,
-    channel: usize,
-) {
-    let dest = &mut dest[channel..];
+fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
+    const STRIDE: usize = std::mem::size_of::<u32>();
+    const STRIDE_COUNT: usize = SAI_BLOCK_SIZE / STRIDE;
 
-    let mut write_count = 0;
-    let mut src_idx = 0;
-    let mut dest_idx = 0;
+    let mut src = src.iter();
+    let mut dst = dst.iter_mut();
+    let mut src = || src.next().expect("src has items");
+    let mut dst = || {
+        let value = dst.next().expect("dst has items");
+        dst.nth(STRIDE - 2); // This would the same as calling `next()` 3 times.
+        value
+    };
 
-    while write_count < stride_count {
-        let mut length = src[src_idx] as usize;
-        src_idx += 1;
-        if length < 128 {
-            length += 1;
-            write_count += length;
-            while length != 0 {
-                dest[dest_idx] = src[src_idx];
-                src_idx += 1;
-                dest_idx += stride;
-                length -= 1;
+    let mut wrote = 0;
+    while wrote < STRIDE_COUNT {
+        let length = *src() as usize;
+
+        wrote += match length.cmp(&128) {
+            Ordering::Less => {
+                let length = length + 1;
+                (0..length).for_each(|_| *dst() = *src());
+
+                length
             }
-        } else if length > 128 {
-            length ^= 0xFF;
-            length += 2;
-            write_count += length;
-            let value = src[src_idx];
-            src_idx += 1;
-            while length != 0 {
-                dest[dest_idx] = value;
-                dest_idx += stride;
-                length -= 1;
+            Ordering::Greater => {
+                let length = (length ^ 255) + 2;
+                let value = *src();
+                (0..length).for_each(|_| *dst() = value);
+
+                length
             }
+            Ordering::Equal => 0,
         }
     }
 }
@@ -468,8 +463,8 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
     reader.read_exact(&mut tile_map)?;
 
     let mut image_bytes = vec![0; width * height * 4];
-    let mut decompressed_rle = [0; SAI_BLOCK_SIZE];
-    let mut compressed_rle = [0; SAI_BLOCK_SIZE / 2];
+    let mut rle_dst = [0; SAI_BLOCK_SIZE];
+    let mut rle_src = [0; SAI_BLOCK_SIZE / 2];
 
     for y in 0..y_tiles {
         for x in 0..x_tiles {
@@ -481,16 +476,10 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
             // Reads BGRA channels. Skip the next 4 ( unknown ).
             (0..8).try_for_each(|channel| {
                 let size: usize = reader.read_as_num::<u16>().into();
-                reader.read_with_size(&mut compressed_rle, size)?;
+                reader.read_with_size(&mut rle_src, size)?;
 
                 if channel < 4 {
-                    rle_decompress_stride(
-                        &mut decompressed_rle,
-                        &compressed_rle,
-                        size_of::<u32>(),
-                        SAI_BLOCK_SIZE / size_of::<u32>(),
-                        channel,
-                    );
+                    rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
                 }
 
                 Ok::<_, Error>(())
@@ -499,7 +488,7 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
             let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
 
             // Leave pre-multiplied.
-            for (i, chunk) in decompressed_rle.chunks_exact_mut(4).enumerate() {
+            for (i, chunk) in rle_dst.chunks_exact_mut(4).enumerate() {
                 // BGRA -> RGBA.
                 chunk.swap(0, 2);
 
