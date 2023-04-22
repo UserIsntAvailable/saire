@@ -1,6 +1,5 @@
-use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
-use crate::FormatError;
-use linked_hash_map::{IntoIter, LinkedHashMap};
+use super::{create_png, Error, FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
+use linked_hash_map::LinkedHashMap;
 use std::{cmp::Ordering, collections::HashMap, ffi::c_uchar, fs::File, ops::Index, path::Path};
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
@@ -36,16 +35,12 @@ use std::{cmp::Ordering, collections::HashMap, ffi::c_uchar, fs::File, ops::Inde
 ///     Ok(())
 /// }
 /// ```
-pub struct LayerTable {
-    // Using a `LinkedHashMap`, because this is probably the way how SYSTEMAX implements it.
-    /// Maps the identifier of a `Layer` to its position from bottom to top.
-    inner: LinkedHashMap<u32, LayerType>,
-}
+pub struct LayerTable(LinkedHashMap<u32, LayerType>);
 
 impl LayerTable {
     pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
-        Ok(LayerTable {
-            inner: (0..reader.read_as_num())
+        Ok(LayerTable(
+            (0..reader.read_as_num())
                 .map(|i| {
                     let id: u32 = reader.read_as_num();
 
@@ -60,13 +55,13 @@ impl LayerTable {
 
                     Ok((id, r#type))
                 })
-                .collect::<Result<LinkedHashMap<_, _>>>()?,
-        })
+                .collect::<Result<_>>()?,
+        ))
     }
 
     /// Gets the order of the specified layer `id`.
     pub fn order_of(&self, id: u32) -> Option<usize> {
-        self.inner.keys().position(|v| *v == id)
+        self.0.keys().position(|v| *v == id)
     }
 
     /// Modifies a <code>[Vec]<[Layer]></code> to be ordered from `lowest` to `highest`.
@@ -78,7 +73,7 @@ impl LayerTable {
     /// - If any of the of the [`Layer::id`]'s is not available in the [`LayerTable`].
     pub fn order(&self, layers: &mut Vec<Layer>) {
         let keys = self
-            .inner
+            .0
             .keys()
             .enumerate()
             .map(|(i, k)| (k, i))
@@ -97,30 +92,26 @@ impl Index<u32> for LayerTable {
     ///
     /// - If the id wasn't found.
     fn index(&self, id: u32) -> &Self::Output {
-        &self.inner[&id]
+        &self.0[&id]
     }
 }
 
-pub struct LayerTableIntoIter {
-    inner: IntoIter<u32, LayerType>,
-}
+pub struct IntoIter(linked_hash_map::IntoIter<u32, LayerType>);
 
-impl Iterator for LayerTableIntoIter {
+impl Iterator for IntoIter {
     type Item = (u32, LayerType);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        self.0.next()
     }
 }
 
 impl IntoIterator for LayerTable {
     type Item = (u32, LayerType);
-    type IntoIter = LayerTableIntoIter;
+    type IntoIter = IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        LayerTableIntoIter {
-            inner: self.inner.into_iter(),
-        }
+        IntoIter(self.0.into_iter())
     }
 }
 
