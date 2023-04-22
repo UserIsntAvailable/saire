@@ -3,11 +3,15 @@ pub mod canvas;
 pub mod layer;
 pub mod thumbnail;
 
-use self::{author::Author, canvas::Canvas, layer::LayerTable, thumbnail::Thumbnail};
+use self::{
+    author::Author,
+    canvas::Canvas,
+    layer::{Layer, LayerTable},
+    thumbnail::Thumbnail,
+};
 use crate::{
     block::{data::Inode, SAI_BLOCK_SIZE},
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
-    layer::Layer,
     utils,
 };
 #[cfg(feature = "png")]
@@ -234,9 +238,8 @@ fn build_tree(
     include_color: bool,
     visible_parent: bool,
 ) {
-    use colored::Colorize;
-
     use crate::layer::LayerType;
+    use colored::Colorize;
 
     for child in &map[&index] {
         let visible = child.visible && visible_parent;

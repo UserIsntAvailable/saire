@@ -149,6 +149,7 @@ impl LayerType {
     }
 }
 
+#[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlendingMode {
     PassThrough,
@@ -334,7 +335,6 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::doc::layer::LayerType;
     /// use saire::{SaiDocument, Result, doc::layer::LayerType};
     ///
     /// fn main() -> Result<()> {
