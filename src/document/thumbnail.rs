@@ -1,6 +1,4 @@
-use crate::FormatError;
-
-use super::{create_png, Error, InodeReader, Result};
+use super::{create_png, FormatError, InodeReader, Result};
 use std::fs::File;
 use std::path::Path;
 
@@ -15,19 +13,7 @@ pub struct Thumbnail {
 }
 
 impl Thumbnail {
-    #[cfg(feature = "png")]
-    /// Gets a png image from the underlying `Thumbnail` pixels.
-    pub fn to_png(&self, path: impl AsRef<Path>) -> Result<()> {
-        Ok(create_png(File::create(path)?, self.width, self.height)
-            .write_header()?
-            .write_image_data(&self.pixels)?)
-    }
-}
-
-impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
-    type Error = Error;
-
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
         let width: u32 = reader.read_as_num();
         let height: u32 = reader.read_as_num();
 
@@ -52,5 +38,13 @@ impl TryFrom<&mut InodeReader<'_>> for Thumbnail {
             height,
             pixels,
         })
+    }
+
+    #[cfg(feature = "png")]
+    /// Gets a png image from the underlying `Thumbnail` pixels.
+    pub fn to_png(&self, path: impl AsRef<Path>) -> Result<()> {
+        Ok(create_png(File::create(path)?, self.width, self.height)
+            .write_header()?
+            .write_image_data(&self.pixels)?)
     }
 }

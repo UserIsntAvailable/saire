@@ -123,7 +123,7 @@ macro_rules! file_method {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
             let mut reader = InodeReader::new(&self.fs, &file);
-            <$return_type>::try_from(&mut reader)
+            <$return_type>::new(&mut reader)
         }
     };
 }

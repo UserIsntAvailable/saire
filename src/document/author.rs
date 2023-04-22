@@ -1,4 +1,4 @@
-use super::{utils, Error, InodeReader, Result};
+use super::{utils, InodeReader, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Author {
@@ -16,10 +16,8 @@ pub struct Author {
     pub machine_hash: String,
 }
 
-impl TryFrom<&mut InodeReader<'_>> for Author {
-    type Error = Error;
-
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+impl Author {
+    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
         let bitflag: u32 = reader.read_as_num();
 
         if bitflag >> 24 != 0x80 {

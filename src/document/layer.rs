@@ -1,7 +1,7 @@
 use super::{create_png, Error, InodeReader, Result, SAI_BLOCK_SIZE};
 use crate::FormatError;
 use linked_hash_map::{IntoIter, LinkedHashMap};
-use std::{cmp::Ordering, collections::HashMap, fs::File, ops::Index, path::Path};
+use std::{cmp::Ordering, collections::HashMap, ffi::c_uchar, fs::File, ops::Index, path::Path};
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
 ///
@@ -43,6 +43,27 @@ pub struct LayerTable {
 }
 
 impl LayerTable {
+    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
+        Ok(LayerTable {
+            inner: (0..reader.read_as_num())
+                .map(|i| {
+                    let id: u32 = reader.read_as_num();
+
+                    // LayerType, not needed in this case.
+                    let r#type = LayerType::new(reader.read_as_num())?;
+
+                    // Gets sent as windows message 0x80CA for some reason.
+                    //
+                    // 1       if LayerType::Set.
+                    // 157/158 if LayerType::Regular.
+                    let _: u16 = reader.read_as_num();
+
+                    Ok((id, r#type))
+                })
+                .collect::<Result<LinkedHashMap<_, _>>>()?,
+        })
+    }
+
     /// Gets the order of the specified layer `id`.
     pub fn order_of(&self, id: u32) -> Option<usize> {
         self.inner.keys().position(|v| *v == id)
@@ -64,31 +85,6 @@ impl LayerTable {
             .collect::<HashMap<_, _>>();
 
         layers.sort_by_cached_key(|e| keys[&e.id])
-    }
-}
-
-impl TryFrom<&mut InodeReader<'_>> for LayerTable {
-    type Error = Error;
-
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
-        Ok(LayerTable {
-            inner: (0..reader.read_as_num())
-                .map(|i| {
-                    let id: u32 = reader.read_as_num();
-
-                    // LayerType, not needed in this case.
-                    let r#type: LayerType = reader.read_as_num::<u16>().try_into()?;
-
-                    // Gets sent as windows message 0x80CA for some reason.
-                    //
-                    // 1       if LayerType::Set.
-                    // 157/158 if LayerType::Regular.
-                    let _: u16 = reader.read_as_num();
-
-                    Ok((id, r#type))
-                })
-                .collect::<Result<LinkedHashMap<_, _>>>()?,
-        })
     }
 }
 
@@ -145,7 +141,6 @@ pub enum LayerType {
     Set = 0x08,
 }
 
-#[doc(hidden)]
 impl LayerType {
     fn new(value: u16) -> Result<Self> {
         use LayerType::*;
@@ -163,28 +158,6 @@ impl LayerType {
     }
 }
 
-#[doc(hidden)]
-impl TryFrom<u32> for LayerType {
-    type Error = Error;
-
-    fn try_from(value: u32) -> Result<Self> {
-        if value > u16::MAX.into() {
-            panic!("value if bigger than u16::MAX")
-        }
-
-        LayerType::new(value as u16)
-    }
-}
-
-#[doc(hidden)]
-impl TryFrom<u16> for LayerType {
-    type Error = Error;
-
-    fn try_from(value: u16) -> Result<Self> {
-        LayerType::new(value)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlendingMode {
     PassThrough,
@@ -198,13 +171,8 @@ pub enum BlendingMode {
     Binary,
 }
 
-#[doc(hidden)]
-impl TryFrom<[std::ffi::c_uchar; 4]> for BlendingMode {
-    type Error = Error;
-
-    fn try_from(mut bytes: [std::ffi::c_uchar; 4]) -> Result<Self> {
-        bytes.reverse();
-
+impl BlendingMode {
+    fn new(bytes: [c_uchar; 4]) -> Result<Self> {
         use BlendingMode::*;
 
         #[rustfmt::skip]
@@ -289,7 +257,10 @@ pub struct Layer {
 
 impl Layer {
     pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
-        let r#type: LayerType = reader.read_as_num::<u32>().try_into()?;
+        let r#type = reader.read_as_num::<u32>();
+        let r#type: u16 = r#type.try_into().map_err(|_| FormatError::Invalid)?;
+        let r#type = LayerType::new(r#type)?;
+
         let id: u32 = reader.read_as_num();
 
         // SAFETY: LayersBounds is #[repr(C)].
@@ -303,8 +274,9 @@ impl Layer {
         let _: u8 = reader.read_as_num();
 
         // SAFETY: c_uchar is an alias of u8.
-        let blending_mode: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
-        let blending_mode: BlendingMode = blending_mode.try_into()?;
+        let mut blending_mode: [c_uchar; 4] = unsafe { reader.read_as() };
+        blending_mode.reverse();
+        let blending_mode = BlendingMode::new(blending_mode)?;
 
         let mut layer = Self {
             r#type,

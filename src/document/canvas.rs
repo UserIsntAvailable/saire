@@ -1,6 +1,5 @@
 use crate::FormatError;
-
-use super::{Error, InodeReader, Result};
+use super::{InodeReader, Result};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,10 +40,8 @@ pub struct Canvas {
     pub selected_layer: Option<u32>,
 }
 
-impl TryFrom<&mut InodeReader<'_>> for Canvas {
-    type Error = Error;
-
-    fn try_from(reader: &mut InodeReader<'_>) -> Result<Self> {
+impl Canvas {
+    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
         let alignment: u32 = reader.read_as_num();
 
         if alignment != 16 {
