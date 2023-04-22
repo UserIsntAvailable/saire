@@ -1,6 +1,13 @@
 use super::{create_png, Error, FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
 use linked_hash_map::LinkedHashMap;
-use std::{cmp::Ordering, collections::HashMap, ffi::c_uchar, fs::File, ops::Index, path::Path};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    ffi::{c_uchar, CStr},
+    fs::File,
+    ops::Index,
+    path::Path,
+};
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
 ///
@@ -295,10 +302,14 @@ impl Layer {
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "name" => {
                     // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 256] = unsafe { reader.read_as() };
+                    let name: [u8; 256] = unsafe { reader.read_as() };
+                    let name = CStr::from_bytes_until_nul(&name)
+                        .expect("contains null character")
+                        .to_owned()
+                        .into_string()
+                        .expect("UTF-8");
 
-                    let buf = buf.splitn(2, |c| c == &0).next().unwrap();
-                    let _ = layer.name.insert(String::from_utf8_lossy(buf).into());
+                    let _ = layer.name.insert(name);
                 }
                 "pfid" => drop(layer.parent_set.insert(reader.read_as_num())),
                 "plid" => drop(layer.parent_layer.insert(reader.read_as_num())),
@@ -317,7 +328,7 @@ impl Layer {
                     let _ = layer.texture_scale.insert(reader.read_as_num());
                     let _ = layer.texture_opacity.insert(reader.read_as_num());
                 }
-                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
+                _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
         }
 

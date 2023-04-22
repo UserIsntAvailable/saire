@@ -1,5 +1,6 @@
 use super::*;
 use crate::utils;
+use std::ffi::CStr;
 
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -36,22 +37,13 @@ impl Inode {
 
     /// The name of the inode.
     pub(crate) fn name(&self) -> &str {
-        let name = self.name.as_ptr();
-        // SAFETY: name is a valid pointer.
-        //
-        // - `name` is contiguous, because it is an array of `u32`s.
-        //
-        // - the total size of the slice is always guaranteed to be of length 32.
-        //
-        // - slice ( the return value ), should not be modified.
-        let slice = unsafe { std::slice::from_raw_parts(name, 32) };
+        let name = CStr::from_bytes_until_nul(&self.name)
+            .expect("contains null character")
+            .to_str()
+            .expect("UTF-8");
 
-        // SAFETY: name guarantees to have valid UTF-8 ( ASCII ) values.
-        let str = unsafe { std::str::from_utf8_unchecked(slice) };
-
-        // stops at the first NULL character to make '==' easier on the rust side.
-        // FIX: For some reason there is a `#01` appended to the name.
-        &str[str.find('.').unwrap_or_default()..str.find('\0').unwrap()]
+        // FIX: For some reason there is `#01` appended to the name on my sample file.
+        &name[name.find('.').unwrap_or(0)..]
     }
 
     /// Whether the `Inode` is `InodeType::File` or `InodeType::Folder`

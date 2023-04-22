@@ -1,5 +1,4 @@
-use crate::FormatError;
-use super::{InodeReader, Result};
+use super::{FormatError, InodeReader, Result};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +79,7 @@ impl Canvas {
                 }
                 "wsrc" => drop(canvas.selection_source.insert(reader.read_as_num())),
                 "layr" => drop(canvas.selected_layer.insert(reader.read_as_num())),
-                _ => drop(reader.read_exact(&mut vec![0; size as usize])?),
+                _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
         }
 
