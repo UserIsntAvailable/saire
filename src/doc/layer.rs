@@ -334,7 +334,8 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::{SaiDocument, LayerType, Result};
+    /// use saire::doc::layer::LayerType;
+    /// use saire::{SaiDocument, Result, doc::layer::LayerType};
     ///
     /// fn main() -> Result<()> {
     ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;

@@ -1,13 +1,13 @@
-pub(crate) mod author;
-pub(crate) mod canvas;
-pub(crate) mod layer;
-pub(crate) mod thumbnail;
+pub mod author;
+pub mod canvas;
+pub mod layer;
+pub mod thumbnail;
 
-pub use crate::{author::*, canvas::*, layer::*, thumbnail::*};
-
+use self::{author::Author, canvas::Canvas, layer::LayerTable, thumbnail::Thumbnail};
 use crate::{
     block::{data::Inode, SAI_BLOCK_SIZE},
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
+    layer::Layer,
     utils,
 };
 #[cfg(feature = "png")]
@@ -22,7 +22,6 @@ use std::{
 
 // TODO: documentation.
 // TODO: serde feature.
-// TODO: should *all* types here have `Sai` prefix?
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -237,6 +236,8 @@ fn build_tree(
 ) {
     use colored::Colorize;
 
+    use crate::layer::LayerType;
+
     for child in &map[&index] {
         let visible = child.visible && visible_parent;
         let mut name = child.name.as_ref().unwrap().to_string();
@@ -298,7 +299,11 @@ impl Display for SaiDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::path::read_res;
+    use crate::{
+        canvas::{ResolutionUnit, SizeUnit},
+        layer::LayerType,
+        utils::path::read_res,
+    };
     use lazy_static::lazy_static;
     use std::fs::read;
 
