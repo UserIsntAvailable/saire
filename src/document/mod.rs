@@ -6,7 +6,10 @@ pub(crate) mod thumbnail;
 pub use crate::{author::*, canvas::*, layer::*, thumbnail::*};
 
 use crate::{
-    block::{data::Inode, SAI_BLOCK_SIZE},
+    block::{
+        data::{Inode, InodeType},
+        SAI_BLOCK_SIZE,
+    },
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
@@ -122,7 +125,8 @@ macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
-            let mut reader = InodeReader::new(&self.fs, &file);
+            debug_assert!(file.r#type() == &InodeType::File);
+            let mut reader = InodeReader::new(&self.fs, file.next_block());
             <$return_type>::try_from(&mut reader)
         }
     };
@@ -196,7 +200,7 @@ impl SaiDocument {
                     .iter()
                     .filter(|i| i.flags() != 0)
                     .map(|i| {
-                        let mut reader = InodeReader::new(&self.fs, &i);
+                        let mut reader = InodeReader::new(&self.fs, i.next_block());
                         Layer::new(&mut reader, decompress_layers)
                     })
                     .collect::<Vec<_>>()

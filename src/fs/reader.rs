@@ -1,72 +1,61 @@
 use super::FileSystemReader;
-use crate::block::{
-    data::{Inode, InodeType},
-    BlockBuffer, SAI_BLOCK_SIZE,
-};
+use crate::block::{BlockBuffer, SAI_BLOCK_SIZE};
 use crate::Result;
 use num_traits::Num;
 use std::{
-    io::{BufWriter, Write},
+    cmp::min,
+    io::{Error, ErrorKind, Write},
     mem::size_of,
 };
 
 /// Reads the contents of an `InodeType::File`.
 pub(crate) struct InodeReader<'a> {
     /// [`None`] if the file that we are reading from doesn't have more bytes to be read.
-    buf: Option<BlockBuffer>,
-    cur_block: Option<u32>,
+    data: BlockBuffer,
+    next_page_index: u32,
     fs: &'a FileSystemReader,
-    position: usize,
+    pos: usize,
 }
 
 impl<'a> InodeReader<'a> {
-    pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
-        debug_assert!(inode.r#type() == &InodeType::File);
+    pub(crate) fn new(fs: &'a FileSystemReader, inode_page_index: u32) -> Self {
+        let (data, next_page_index) = fs.read_data(inode_page_index as usize);
+        let data = data.as_bytes().to_owned();
+        let next_page_index = next_page_index.unwrap_or_default();
 
         Self {
-            buf: None,
-            cur_block: Some(inode.next_block()),
+            data,
+            next_page_index,
             fs,
-            position: 0,
+            pos: 0,
         }
     }
 
     /// TODO
-    pub(crate) fn read_exact(&mut self, buffer: &mut [u8]) -> Result<()> {
-        self.read_with_size(buffer, buffer.len())
+    pub(crate) fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        self.read_with_size(buf, buf.len())
     }
 
     /// TODO
-    pub(crate) fn read_with_size(&mut self, buffer: &mut [u8], size: usize) -> Result<()> {
+    pub(crate) fn read_with_size(&mut self, buf: &mut [u8], size: usize) -> Result<()> {
+        let mut buf = buf;
         let mut left_to_read = size;
-        let mut writer = BufWriter::new(buffer);
 
-        loop {
-            if let Some(ref mut buf) = self.buf {
-                let (to_read, done_reading) = if left_to_read + self.position >= SAI_BLOCK_SIZE {
-                    (SAI_BLOCK_SIZE - self.position, false)
-                } else {
-                    (left_to_read, true)
-                };
-
-                writer.write(&buf[self.position..self.position + to_read])?;
-
-                if done_reading {
-                    self.position += to_read;
-                    break;
+        while left_to_read != 0 {
+            if self.pos == SAI_BLOCK_SIZE {
+                if self.next_page_index == 0 {
+                    return Err(Error::from(ErrorKind::UnexpectedEof).into());
                 }
 
-                self.buf = None;
-                self.position = 0;
-                left_to_read -= to_read;
-            } else if let Some(cur_block) = self.cur_block {
-                let (data_block, next_block) = self.fs.read_data(cur_block as usize);
-
-                self.buf = Some(data_block.as_bytes().to_owned());
-                self.cur_block = next_block;
-            } else {
-                panic!("End of file.");
+                *self = Self::new(self.fs, self.next_page_index);
             }
+
+            let to_read = min(left_to_read, SAI_BLOCK_SIZE - self.pos);
+            let read = &self.data[self.pos..][..to_read];
+            buf.write_all(&read)?;
+
+            self.pos += to_read;
+            left_to_read -= to_read;
         }
 
         Ok(())
