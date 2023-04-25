@@ -17,7 +17,6 @@ use crate::{
 #[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
 use std::{
-    collections::HashMap,
     fmt::{Display, Formatter},
     fs::File,
     io,
@@ -230,75 +229,13 @@ impl From<&[u8]> for SaiDocument {
     }
 }
 
-fn build_tree(
-    tree: &mut ptree::TreeBuilder,
-    index: u32,
-    map: &HashMap<u32, Vec<Layer>>,
-    include_color: bool,
-    visible_parent: bool,
-) {
-    use crate::layer::LayerType;
-    #[cfg(feature = "colored")]
-    use colored::Colorize;
-
-    for child in &map[&index] {
-        let visible = child.visible && visible_parent;
-        #[allow(unused_mut)]
-        let mut name = child.name.as_ref().unwrap().to_string();
-
-        #[cfg(feature = "colored")]
-        if include_color && !visible {
-            name = name.truecolor(69, 69, 69).italic().to_string()
-        }
-
-        match child.r#type {
-            LayerType::Regular | LayerType::Linework => {
-                #[cfg(feature = "colored")]
-                if include_color {
-                    name = name.truecolor(200, 200, 200).to_string()
-                }
-
-                tree.add_empty_child(name);
-            }
-            LayerType::Set => {
-                #[cfg(feature = "colored")]
-                if include_color {
-                    name = name.truecolor(222, 222, 222).bold().to_string()
-                }
-
-                tree.begin_child(name);
-                build_tree(tree, child.id, map, include_color, visible);
-                tree.end_child();
-            }
-            _ => (),
-        }
-    }
-}
-
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
         self.laytbl().unwrap().order(&mut layers);
         layers.reverse();
 
-        use itertools::Itertools;
-        use ptree::TreeBuilder;
-
-        let tree = &mut TreeBuilder::new(".".into());
-
-        build_tree(
-            tree,
-            0,
-            &layers
-                .into_iter()
-                .into_group_map_by(|l| l.parent_set.map_or(0, |id| id)),
-            f.alternate(),
-            true,
-        );
-
-        utils::ptree::write_tree(tree.build(), f).unwrap();
-
-        Ok(())
+        utils::tree::LayerTree::new(layers).fmt(f)
     }
 }
 
