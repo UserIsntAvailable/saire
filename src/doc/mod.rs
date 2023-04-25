@@ -230,7 +230,6 @@ impl From<&[u8]> for SaiDocument {
     }
 }
 
-#[cfg(feature = "tree_view")]
 fn build_tree(
     tree: &mut ptree::TreeBuilder,
     index: u32,
@@ -239,18 +238,22 @@ fn build_tree(
     visible_parent: bool,
 ) {
     use crate::layer::LayerType;
+    #[cfg(feature = "colored")]
     use colored::Colorize;
 
     for child in &map[&index] {
         let visible = child.visible && visible_parent;
+        #[allow(unused_mut)]
         let mut name = child.name.as_ref().unwrap().to_string();
 
+        #[cfg(feature = "colored")]
         if include_color && !visible {
             name = name.truecolor(69, 69, 69).italic().to_string()
         }
 
         match child.r#type {
             LayerType::Regular | LayerType::Linework => {
+                #[cfg(feature = "colored")]
                 if include_color {
                     name = name.truecolor(200, 200, 200).to_string()
                 }
@@ -258,6 +261,7 @@ fn build_tree(
                 tree.add_empty_child(name);
             }
             LayerType::Set => {
+                #[cfg(feature = "colored")]
                 if include_color {
                     name = name.truecolor(222, 222, 222).bold().to_string()
                 }
@@ -271,7 +275,6 @@ fn build_tree(
     }
 }
 
-#[cfg(feature = "tree_view")]
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();

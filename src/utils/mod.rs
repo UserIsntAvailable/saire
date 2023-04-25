@@ -35,7 +35,6 @@ pub(crate) mod time {
 ///
 /// Here I will implement that you can pass an `std::fmt::Formatter<'_>`,
 /// instead so I would be able to do `write_tree(&tree, f)`.
-#[cfg(feature = "tree_view")]
 pub(crate) mod ptree {
     use ptree::{
         item::StringItem, print_config::OutputKind, IndentChars, PrintConfig, Style, TreeItem,
