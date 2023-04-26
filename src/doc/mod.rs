@@ -244,7 +244,7 @@ mod tests {
     use super::*;
     use crate::{
         doc::canvas::{ResolutionUnit, SizeUnit},
-        doc::layer::LayerType,
+        doc::layer::LayerKind,
         utils::path::read_res,
     };
     use lazy_static::lazy_static;
@@ -273,7 +273,7 @@ mod tests {
 
         use std::ops::Index;
 
-        assert_eq!(laytbl.index(2), &LayerType::Regular);
+        assert_eq!(laytbl.index(2), &LayerKind::Regular);
         assert_eq!(laytbl.order_of(2).unwrap(), 0);
         assert_eq!(laytbl.into_iter().count(), 1);
 

@@ -14,13 +14,13 @@ use std::{
 /// This is used to keep track of 3 properties of a [`Layer`]:
 ///
 /// - id
-/// - type
+/// - kind
 /// - order/rank
 ///
 /// Where order/rank refers to the index from `lowest` to `highest` where the layer is placed in the
 /// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
 ///
-/// To get the [`LayerType`], you can use [`index`]. To get the order of a [`Layer`], you can use
+/// To get the [`LayerKind`], you can use [`index`]. To get the order of a [`Layer`], you can use
 /// [`order_of`].
 ///
 /// [`index`]: LayerTable::index
@@ -42,7 +42,7 @@ use std::{
 ///     Ok(())
 /// }
 /// ```
-pub struct LayerTable(LinkedHashMap<u32, LayerType>);
+pub struct LayerTable(LinkedHashMap<u32, LayerKind>);
 
 impl LayerTable {
     pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
@@ -51,16 +51,15 @@ impl LayerTable {
                 .map(|_| {
                     let id: u32 = reader.read_as_num();
 
-                    // LayerType, not needed in this case.
-                    let r#type = LayerType::new(reader.read_as_num())?;
+                    let kind = LayerKind::new(reader.read_as_num())?;
 
                     // Gets sent as windows message 0x80CA for some reason.
                     //
-                    // 1       if LayerType::Set.
-                    // 157/158 if LayerType::Regular.
+                    // 1       if LayerKind::Set.
+                    // 157/158 if LayerKind::Regular.
                     let _: u16 = reader.read_as_num();
 
-                    Ok((id, r#type))
+                    Ok((id, kind))
                 })
                 .collect::<Result<_>>()?,
         ))
@@ -91,9 +90,9 @@ impl LayerTable {
 }
 
 impl Index<u32> for LayerTable {
-    type Output = LayerType;
+    type Output = LayerKind;
 
-    /// Gets the [`LayerType`] of the specified layer `id`.
+    /// Gets the [`LayerKind`] of the specified layer `id`.
     ///
     /// # Panics
     ///
@@ -103,10 +102,10 @@ impl Index<u32> for LayerTable {
     }
 }
 
-pub struct IntoIter(linked_hash_map::IntoIter<u32, LayerType>);
+pub struct IntoIter(linked_hash_map::IntoIter<u32, LayerKind>);
 
 impl Iterator for IntoIter {
-    type Item = (u32, LayerType);
+    type Item = (u32, LayerKind);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next()
@@ -114,7 +113,7 @@ impl Iterator for IntoIter {
 }
 
 impl IntoIterator for LayerTable {
-    type Item = (u32, LayerType);
+    type Item = (u32, LayerKind);
     type IntoIter = IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -124,7 +123,7 @@ impl IntoIterator for LayerTable {
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LayerType {
+pub enum LayerKind {
     /// Canvas pseudo-layer.
     RootLayer = 0x00,
     /// Basic Layer.
@@ -139,9 +138,9 @@ pub enum LayerType {
     Set = 0x08,
 }
 
-impl LayerType {
+impl LayerKind {
     fn new(value: u16) -> Result<Self> {
-        use LayerType::*;
+        use LayerKind::*;
 
         match value {
             0 => Ok(RootLayer),
@@ -209,7 +208,7 @@ pub struct LayerBounds {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
-    pub r#type: LayerType,
+    pub kind: LayerKind,
     /// The identifier of the layer.
     pub id: u32,
     pub bounds: LayerBounds,
@@ -217,7 +216,7 @@ pub struct Layer {
     pub opacity: u8,
     /// Whether or not this layer is visible.
     ///
-    /// If a [`LayerType::Set`] is not visible, all its children will also be not be visible.
+    /// If a [`LayerKind::Set`] is not visible, all its children will also be not be visible.
     pub visible: bool,
     /// If [`true`], locks transparent pixels, so that you can only paint in pixels that are opaque.
     pub preserve_opacity: bool,
@@ -226,17 +225,17 @@ pub struct Layer {
 
     /// The name of the layer.
     ///
-    /// It is always safe to [`unwrap`] if [`LayerType::Regular`].
+    /// It is always safe to [`unwrap`] if [`LayerKind::Regular`].
     ///
     /// [`unwrap`]: Option::unwrap
     pub name: Option<String>,
-    /// If this layer is a child of a [`LayerType::Set`], this will be the layer id of that
-    /// [`LayerType::Set`].
+    /// If this layer is a child of a [`LayerKind::Set`], this will be the layer id of that
+    /// [`LayerKind::Set`].
     pub parent_set: Option<u32>,
-    /// If this layer is a child of another layer (i.e: a [`LayerType::Mask`]), this will be the
+    /// If this layer is a child of another layer (i.e: a [`LayerKind::Mask`]), this will be the
     /// layer id of the parent container layer.
     pub parent_layer: Option<u32>,
-    /// Wether or not a [`LayerType::Set`] is expanded within the layers panel or not.
+    /// Wether or not a [`LayerKind::Set`] is expanded within the layers panel or not.
     pub open: Option<bool>,
     /// Name of the overlay-texture assigned to a layer. i.e: `Watercolor A`. Only appears in layers
     /// that have an overlay enabled.
@@ -245,20 +244,20 @@ pub struct Layer {
     pub texture_opacity: Option<u8>,
     /// The additional data of the layer.
     ///
-    /// If the layer is [`LayerType::Set`], there is no additional data. If the layer is
-    /// [`LayerType::Regular`] then data will hold pixels in the RGBA color model with
+    /// If the layer is [`LayerKind::Set`], there is no additional data. If the layer is
+    /// [`LayerKind::Regular`] then data will hold pixels in the RGBA color model with
     /// pre-multiplied alpha.
     ///
-    /// For now, others [`LayerType`]s will not include their additional data.
+    /// For now, others [`LayerKind`]s will not include their additional data.
     pub data: Option<Vec<u8>>,
     // TODO: peff stream
 }
 
 impl Layer {
     pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
-        let r#type = reader.read_as_num::<u32>();
-        let r#type: u16 = r#type.try_into().map_err(|_| FormatError::Invalid)?;
-        let r#type = LayerType::new(r#type)?;
+        let kind = reader.read_as_num::<u32>();
+        let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
+        let kind = LayerKind::new(kind)?;
 
         let id: u32 = reader.read_as_num();
 
@@ -278,7 +277,7 @@ impl Layer {
         let blending_mode = BlendingMode::new(blending_mode)?;
 
         let mut layer = Self {
-            r#type,
+            kind,
             id,
             bounds,
             opacity,
@@ -332,7 +331,7 @@ impl Layer {
             }
         }
 
-        if decompress_layer_data && r#type == LayerType::Regular {
+        if decompress_layer_data && kind == LayerKind::Regular {
             let data = decompress_layer(bounds.width as usize, bounds.height as usize, reader)?;
             let _ = layer.data.insert(data);
         };
@@ -346,13 +345,13 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::{SaiDocument, Result, doc::layer::LayerType};
+    /// use saire::{SaiDocument, Result, doc::layer::LayerKind};
     ///
     /// fn main() -> Result<()> {
     ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
     ///     let layer = &layers[0];
     ///
-    ///     if layer.r#type == LayerType::Regular {
+    ///     if layer.kind == LayerKind::Regular {
     ///         // if path is `None` it will save the file at ./{id}-{name}.png
     ///         layer.to_png(Some("layer-0.png"))?;
     ///     }
@@ -363,7 +362,7 @@ impl Layer {
     ///
     /// # Panics
     ///
-    /// - If invoked with a layer with a type other than [`LayerType::Regular`].
+    /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
         use crate::utils::pixel_ops::premultiplied_to_straight;
 
@@ -386,7 +385,7 @@ impl Layer {
             .write_image_data(&premultiplied_to_straight(image_data))?);
         }
 
-        panic!("For now, saire can only decompress LayerType::Regular data.");
+        panic!("For now, saire can only decompress LayerKind::Regular data.");
     }
 }
 

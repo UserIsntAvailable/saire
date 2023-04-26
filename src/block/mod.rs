@@ -173,7 +173,7 @@ mod tests {
 
         assert_eq!(inode.flags(), 2147483648);
         assert_eq!(inode.name(), ".73851dcd1203b24d");
-        assert_eq!(inode.r#type(), &InodeType::File);
+        assert_eq!(inode.kind(), &InodeKind::File);
         assert_eq!(inode.size(), 32);
         assert_eq!(inode.timestamp(), 1567531938);
     }

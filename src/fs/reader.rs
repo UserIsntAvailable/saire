@@ -1,6 +1,6 @@
 use super::FileSystemReader;
 use crate::block::{
-    data::{Inode, InodeType},
+    data::{Inode, InodeKind},
     BlockBuffer, SAI_BLOCK_SIZE,
 };
 use crate::Result;
@@ -10,7 +10,7 @@ use std::{
     mem::size_of,
 };
 
-/// Reads the contents of an `InodeType::File`.
+/// Reads the contents of an `InodeKind::File`.
 pub(crate) struct InodeReader<'a> {
     /// Will be None if no read*() calls have been made; Also, if the file that we are reading from
     /// doesn't have no more bytes to be read.
@@ -21,7 +21,7 @@ pub(crate) struct InodeReader<'a> {
 
 impl<'a> InodeReader<'a> {
     pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
-        debug_assert!(inode.r#type() == &InodeType::File);
+        debug_assert!(inode.kind() == &InodeKind::File);
 
         Self {
             cur_block: Some(inode.next_block()),

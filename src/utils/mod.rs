@@ -23,7 +23,7 @@ pub(crate) mod time {
 }
 
 pub(crate) mod tree {
-    use crate::doc::layer::{Layer, LayerType};
+    use crate::doc::layer::{Layer, LayerKind};
     use std::{
         borrow::Cow,
         collections::HashMap,
@@ -47,16 +47,16 @@ pub(crate) mod tree {
                 .into_iter()
                 .filter(|layer| {
                     matches!(
-                        layer.r#type,
-                        LayerType::Regular | LayerType::Linework | LayerType::Set
+                        layer.kind,
+                        LayerKind::Regular | LayerKind::Linework | LayerKind::Set
                     )
                 })
-                .map(|Layer { r#type, name, id, visible, parent_set, .. }| {
+                .map(|Layer { kind, name, id, visible, parent_set, .. }| {
                     let info = ChildInfo {
                         name: Cow::Owned(name.expect("has name")),
                         id,
                         is_visible: visible,
-                        is_set: matches!(r#type, LayerType::Set),
+                        is_set: matches!(kind, LayerKind::Set),
                     };
 
                     (parent_set.unwrap_or(0), info)
