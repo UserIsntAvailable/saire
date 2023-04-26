@@ -194,7 +194,6 @@ impl BlendingMode {
 ///
 /// Can be off-canvas or larger than canvas if the user moves the layer outside of the `canvas window`
 /// without cropping; similar to `Photoshop`, 0:0 is top-left corner of image.
-#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
     pub x: i32,
@@ -260,10 +259,12 @@ impl Layer {
         let kind = LayerKind::new(kind)?;
 
         let id: u32 = reader.read_as_num();
-
-        // SAFETY: LayersBounds is #[repr(C)].
-        let bounds: LayerBounds = unsafe { reader.read_as() };
-
+        let bounds = LayerBounds {
+            x: reader.read_as_num(),
+            y: reader.read_as_num(),
+            width: reader.read_as_num(),
+            height: reader.read_as_num(),
+        };
         let _: u32 = reader.read_as_num();
         let opacity: u8 = reader.read_as_num();
         let visible: bool = reader.read_as_num::<u8>() >= 1;
