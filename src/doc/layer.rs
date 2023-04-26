@@ -48,7 +48,7 @@ impl LayerTable {
     pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
         Ok(LayerTable(
             (0..reader.read_as_num())
-                .map(|i| {
+                .map(|_| {
                     let id: u32 = reader.read_as_num();
 
                     // LayerType, not needed in this case.

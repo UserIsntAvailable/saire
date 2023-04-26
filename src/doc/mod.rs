@@ -243,8 +243,8 @@ impl Display for SaiDocument {
 mod tests {
     use super::*;
     use crate::{
-        canvas::{ResolutionUnit, SizeUnit},
-        layer::LayerType,
+        doc::canvas::{ResolutionUnit, SizeUnit},
+        doc::layer::LayerType,
         utils::path::read_res,
     };
     use lazy_static::lazy_static;

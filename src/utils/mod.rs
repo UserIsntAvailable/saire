@@ -1,5 +1,6 @@
 pub mod pixel_ops;
 
+#[cfg(test)]
 pub(crate) mod path {
     use std::path::{Path, PathBuf};
 
@@ -22,7 +23,7 @@ pub(crate) mod time {
 }
 
 pub(crate) mod tree {
-    use crate::{doc::layer::Layer, layer::LayerType};
+    use crate::doc::layer::{Layer, LayerType};
     use std::{
         borrow::Cow,
         collections::HashMap,

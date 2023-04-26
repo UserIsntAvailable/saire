@@ -9,6 +9,6 @@ pub mod utils;
 pub(crate) mod block;
 pub(crate) mod fs;
 
-pub use doc::*;
+pub use doc::{Error, FormatError, Result, SaiDocument};
 
 // TODO: `simd` feature.
