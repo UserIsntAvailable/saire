@@ -228,7 +228,9 @@ impl TextureName {
 pub struct Texture {
     /// Name of the overlay-texture assigned to a layer. i.e: `Watercolor A`.
     pub name: TextureName,
+    /// Value ranging from `0` to `500`.
     pub scale: u16,
+    /// Value ranging from `0` to `100`.
     pub opacity: u8,
 }
 
@@ -242,13 +244,30 @@ impl Default for Texture {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Effect {
+    /// Value ranging from `0` to `100`.
+    pub opacity: u8,
+    /// Value ranging from `1` to `15`.
+    pub width: u8,
+}
+
+impl Default for Effect {
+    fn default() -> Self {
+        Self {
+            opacity: 100,
+            width: 15,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
     pub kind: LayerKind,
     /// The identifier of the layer.
     pub id: u32,
     pub bounds: LayerBounds,
-    /// Value ranging from `100` to `0`.
+    /// Value ranging from `0` to `100`.
     pub opacity: u8,
     /// Whether or not this layer is visible.
     ///
@@ -275,6 +294,8 @@ pub struct Layer {
     /// Wether or not a [`LayerKind::Set`] is expanded within the layers panel or not.
     pub open: Option<bool>,
     pub texture: Option<Texture>,
+    /// If [`Some`], the `Fringe` effect is enabled.
+    pub effect: Option<Effect>,
     /// The additional data of the layer.
     ///
     /// If the layer is [`LayerKind::Set`], there is no additional data. If the layer is
@@ -283,7 +304,6 @@ pub struct Layer {
     ///
     /// For now, others [`LayerKind`]s will not include their additional data.
     pub data: Option<Vec<u8>>,
-    // TODO: peff stream
 }
 
 impl Layer {
@@ -325,6 +345,7 @@ impl Layer {
             parent_layer: None,
             open: None,
             texture: None,
+            effect: None,
             data: None,
         };
 
@@ -363,6 +384,15 @@ impl Layer {
                         texture.scale = scale;
                         texture.opacity = opacity;
                     };
+                }
+                "peff" => {
+                    let enabled = reader.read_as_num::<u8>() >= 1;
+                    let opacity: u8 = reader.read_as_num();
+                    let width: u8 = reader.read_as_num();
+
+                    if enabled {
+                        let _ = layer.effect.insert(Effect { opacity, width });
+                    }
                 }
                 _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
