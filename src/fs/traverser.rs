@@ -3,7 +3,7 @@
 // the file format, I will work it latter on.
 
 use super::FileSystemReader;
-use crate::block::data::{Inode, InodeType};
+use crate::block::data::{Inode, InodeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraverseEvent {
@@ -45,13 +45,13 @@ fn traverse_data<'a>(
                 break;
             }
 
-            match inode.r#type() {
-                InodeType::File => {
+            match inode.kind() {
+                InodeKind::File => {
                     if on_traverse(TraverseEvent::File, &inode) {
                         return Some(inode.to_owned());
                     }
                 }
-                InodeType::Folder => {
+                InodeKind::Folder => {
                     if on_traverse(TraverseEvent::FolderStart, &inode) {
                         return Some(inode.to_owned());
                     };
@@ -77,7 +77,7 @@ fn traverse_data<'a>(
 mod tests {
     use super::*;
     use crate::{
-        block::data::{Inode, InodeType},
+        block::data::{Inode, InodeKind},
         utils::path::read_res,
     };
     use eyre::Result;
@@ -119,13 +119,13 @@ mod tests {
                     .expect("timestamp is not out-of-bounds.")
                     .format("%Y-%m-%d");
 
-                self.table.borrow_mut().add_row(match inode.r#type() {
-                    InodeType::Folder => Row::new()
+                self.table.borrow_mut().add_row(match inode.kind() {
+                    InodeKind::Folder => Row::new()
                         .with_cell("")
                         .with_cell("d")
                         .with_cell(date)
                         .with_cell(format!("{}/", inode.name())),
-                    InodeType::File => Row::new()
+                    InodeKind::File => Row::new()
                         .with_cell(inode.size())
                         .with_cell("f")
                         .with_cell(date)

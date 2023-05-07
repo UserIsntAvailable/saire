@@ -2,7 +2,11 @@
 #![feature(stmt_expr_attributes, core_intrinsics)]
 
 use png::Encoder;
-use saire::{utils::pixel_ops::*, BlendingMode, LayerType, Result, SaiDocument};
+use saire::{
+    doc::layer::{BlendingMode, LayerKind},
+    utils::pixel_ops::*,
+    Result, SaiDocument,
+};
 use std::{collections::HashSet, fs::File, path::PathBuf};
 
 // TODO: Instead of using `rotate_{left,right}` I could instead use `slice::ptr_rotate()`.
@@ -53,7 +57,7 @@ fn main() -> Result<()> {
         .into_iter()
         // If a set is `visible = false`, all its children needs to be also `visible = false`.
         .filter(|layer| {
-            if !layer.visible && layer.r#type == LayerType::Set {
+            if !layer.visible && layer.kind == LayerKind::Set {
                 no_visible.insert(layer.id);
             } else if let Some(parent_id) = layer.parent_set {
                 if no_visible.get(&parent_id).is_some() {
@@ -61,7 +65,7 @@ fn main() -> Result<()> {
                 }
             };
 
-            layer.visible && layer.r#type == LayerType::Regular
+            layer.visible && layer.kind == LayerKind::Regular
         })
     {
         let fg_bytes = layer.data.as_mut().expect("LayerType::Regular");

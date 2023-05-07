@@ -1,13 +1,17 @@
-pub(crate) mod author;
-pub(crate) mod canvas;
-pub(crate) mod layer;
-pub(crate) mod thumbnail;
+pub mod author;
+pub mod canvas;
+pub mod layer;
+pub mod thumbnail;
 
-pub use crate::{author::*, canvas::*, layer::*, thumbnail::*};
-
+use self::{
+    author::Author,
+    canvas::Canvas,
+    layer::{Layer, LayerTable},
+    thumbnail::Thumbnail,
+};
 use crate::{
     block::{
-        data::{Inode, InodeType},
+        data::{Inode, InodeKind},
         SAI_BLOCK_SIZE,
     },
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
@@ -16,7 +20,6 @@ use crate::{
 #[cfg(feature = "png")]
 use png::{Encoder, EncodingError};
 use std::{
-    collections::HashMap,
     fmt::{Display, Formatter},
     fs::File,
     io,
@@ -25,7 +28,6 @@ use std::{
 
 // TODO: documentation.
 // TODO: serde feature.
-// TODO: should *all* types here have `Sai` prefix?
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -125,9 +127,9 @@ macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
-            debug_assert!(file.r#type() == &InodeType::File);
+            debug_assert!(file.kind() == &InodeKind::File);
             let mut reader = InodeReader::new(&self.fs, file.next_block());
-            <$return_type>::try_from(&mut reader)
+            <$return_type>::new(&mut reader)
         }
     };
 }
@@ -231,78 +233,24 @@ impl From<&[u8]> for SaiDocument {
     }
 }
 
-#[cfg(feature = "tree_view")]
-fn build_tree(
-    tree: &mut ptree::TreeBuilder,
-    index: u32,
-    map: &HashMap<u32, Vec<Layer>>,
-    include_color: bool,
-    visible_parent: bool,
-) {
-    use colored::Colorize;
-
-    for child in &map[&index] {
-        let visible = child.visible && visible_parent;
-        let mut name = child.name.as_ref().unwrap().to_string();
-
-        if include_color && !visible {
-            name = name.truecolor(69, 69, 69).italic().to_string()
-        }
-
-        match child.r#type {
-            LayerType::Regular | LayerType::Linework => {
-                if include_color {
-                    name = name.truecolor(200, 200, 200).to_string()
-                }
-
-                tree.add_empty_child(name);
-            }
-            LayerType::Set => {
-                if include_color {
-                    name = name.truecolor(222, 222, 222).bold().to_string()
-                }
-
-                tree.begin_child(name);
-                build_tree(tree, child.id, map, include_color, visible);
-                tree.end_child();
-            }
-            _ => (),
-        }
-    }
-}
-
-#[cfg(feature = "tree_view")]
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
         self.laytbl().unwrap().order(&mut layers);
         layers.reverse();
 
-        use itertools::Itertools;
-        use ptree::TreeBuilder;
-
-        let tree = &mut TreeBuilder::new(".".into());
-
-        build_tree(
-            tree,
-            0,
-            &layers
-                .into_iter()
-                .into_group_map_by(|l| l.parent_set.map_or(0, |id| id)),
-            f.alternate(),
-            true,
-        );
-
-        utils::ptree::write_tree(tree.build(), f).unwrap();
-
-        Ok(())
+        utils::tree::LayerTree::new(layers).fmt(f)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::path::read_res;
+    use crate::{
+        doc::canvas::{ResolutionUnit, SizeUnit},
+        doc::layer::LayerKind,
+        utils::path::read_res,
+    };
     use lazy_static::lazy_static;
     use std::fs::read;
 
@@ -329,7 +277,7 @@ mod tests {
 
         use std::ops::Index;
 
-        assert_eq!(laytbl.index(2), &LayerType::Regular);
+        assert_eq!(laytbl.index(2), &LayerKind::Regular);
         assert_eq!(laytbl.order_of(2).unwrap(), 0);
         assert_eq!(laytbl.into_iter().count(), 1);
 

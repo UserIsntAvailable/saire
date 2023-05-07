@@ -1,5 +1,6 @@
 pub mod pixel_ops;
 
+#[cfg(test)]
 pub(crate) mod path {
     use std::path::{Path, PathBuf};
 
@@ -21,143 +22,165 @@ pub(crate) mod time {
     }
 }
 
-/// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-/// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-/// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-/// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-/// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-/// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
-/// IN THE SOFTWARE.
-///
-/// ptree doesn't have a way to output to a writer, kind of. `write_tree` takes
-/// `mut f: io::Write` which means that you can't pass a `Vec` then use the
-/// reference after the method call.
-///
-/// Here I will implement that you can pass an `std::fmt::Formatter<'_>`,
-/// instead so I would be able to do `write_tree(&tree, f)`.
-#[cfg(feature = "tree_view")]
-pub(crate) mod ptree {
-    use ptree::{
-        item::StringItem, print_config::OutputKind, IndentChars, PrintConfig, Style, TreeItem,
+pub(crate) mod tree {
+    use crate::doc::layer::{Layer, LayerKind};
+    use std::{
+        borrow::Cow,
+        collections::HashMap,
+        fmt::{Display, Formatter, Result},
     };
-    use std::{fmt::Formatter, io};
 
-    struct Indent {
-        pub regular_prefix: String,
-        pub child_prefix: String,
-        pub last_regular_prefix: String,
-        pub last_child_prefix: String,
+    struct ChildInfo<'n> {
+        pub name: Cow<'n, str>,
+        pub id: u32,
+        pub is_set: bool,
+        pub is_visible: bool,
     }
 
-    impl Indent {
-        pub fn from_config(config: &PrintConfig) -> Indent {
-            Self::from_characters_and_padding(config.indent, config.padding, &config.characters)
+    pub struct LayerTree<'c>(HashMap<u32, Vec<ChildInfo<'c>>>);
+
+    impl LayerTree<'_> {
+        pub fn new(layers: Vec<Layer>) -> Self {
+            let mut group = HashMap::new();
+            #[rustfmt::skip]
+            layers
+                .into_iter()
+                .filter(|layer| {
+                    matches!(
+                        layer.kind,
+                        LayerKind::Regular | LayerKind::Linework | LayerKind::Set
+                    )
+                })
+                .map(|Layer { kind, name, id, visible, parent_set, .. }| {
+                    let info = ChildInfo {
+                        name: Cow::Owned(name.expect("has name")),
+                        id,
+                        is_visible: visible,
+                        is_set: matches!(kind, LayerKind::Set),
+                    };
+
+                    (parent_set.unwrap_or(0), info)
+                })
+                .for_each(|(k, v)| group.entry(k).or_insert_with(Vec::new).push(v));
+
+            Self(group)
         }
 
-        #[allow(dead_code)]
-        pub fn from_characters(indent_size: usize, characters: &IndentChars) -> Indent {
-            Self::from_characters_and_padding(indent_size, 1, characters)
+        fn collect_root(&self, f: &mut Formatter<'_>) -> Result {
+            self.collect(
+                f,
+                "",
+                "",
+                ChildInfo {
+                    name: Cow::Borrowed("."),
+                    id: 0,
+                    is_set: true,
+                    is_visible: true,
+                },
+            )
         }
 
-        pub fn from_characters_and_padding(
-            indent_size: usize,
-            padding: usize,
-            characters: &IndentChars,
-        ) -> Indent {
-            let m = 1 + padding;
-            let n = if indent_size > m { indent_size - m } else { 0 };
+        /// Writes the `LayerTree` nodes inside the provided `Formatter`.
+        ///
+        /// # Performance
+        ///
+        /// TODO: `LayerTree` performance.
+        ///
+        /// This is almost an 1:1 implementation with the `ptree` one. This one
+        /// is a little more efficient; I'm reusing strings on the children for
+        /// loop, instead of cloning for every instance. I want, however, remove
+        /// the need to re-allocate strings completely, but currently I don't
+        /// have a really good idea how to approach that.
+        fn collect(
+            &self,
+            f: &mut Formatter<'_>,
+            prefix: &str,
+            child_prefix: &str,
+            ChildInfo {
+                name: parent_name,
+                id: parent_id,
+                is_set: parent_is_set,
+                is_visible: parent_is_visible,
+            }: ChildInfo<'_>,
+        ) -> Result {
+            #[allow(unused_mut)]
+            let mut parent_name = parent_name;
 
-            let right_pad = characters.right.repeat(n);
-            let empty_pad = characters.empty.repeat(n);
-            let item_pad = characters.empty.repeat(padding);
+            #[cfg(feature = "colored")]
+            if f.alternate() {
+                use colored::Colorize;
 
-            Indent {
-                regular_prefix: format!("{}{}{}", characters.down_and_right, right_pad, item_pad),
-                child_prefix: format!("{}{}{}", characters.down, empty_pad, item_pad),
-                last_regular_prefix: format!("{}{}{}", characters.turn_right, right_pad, item_pad),
-                last_child_prefix: format!("{}{}{}", characters.empty, empty_pad, item_pad),
+                if !parent_is_visible {
+                    parent_name =
+                        Cow::Owned(parent_name.truecolor(100, 100, 100).italic().to_string());
+                };
+
+                if parent_is_set {
+                    parent_name =
+                        Cow::Owned(parent_name.truecolor(210, 210, 210).bold().to_string());
+                };
+            };
+
+            write!(f, "{}", prefix)?;
+            writeln!(f, "{}", parent_name)?;
+
+            if !parent_is_set {
+                return Ok(());
             }
-        }
-    }
 
-    fn print_item(
-        item: &StringItem,
-        f: &mut std::fmt::Formatter<'_>,
-        prefix: String,
-        child_prefix: String,
-        config: &PrintConfig,
-        characters: &Indent,
-        branch_style: &Style,
-        leaf_style: &Style,
-        level: u32,
-    ) -> io::Result<()> {
-        write!(f, "{}", branch_style.paint(prefix)).unwrap();
-        write!(f, "{}", leaf_style.paint(item.text.clone())).unwrap();
-        writeln!(f, "").unwrap();
+            if let Some((last_child, children)) = self.0[&parent_id].split_last() {
+                let (ref p, ref cp) = (
+                    child_prefix.to_owned() + "├─ ",
+                    child_prefix.to_owned() + "│  ",
+                );
 
-        if level < config.depth {
-            let children = item.children();
-            if let Some((last_child, children)) = children.split_last() {
-                let rp = child_prefix.clone() + &characters.regular_prefix;
-                let cp = child_prefix.clone() + &characters.child_prefix;
-
-                for c in children {
-                    print_item(
-                        c,
+                #[rustfmt::skip]
+                for ChildInfo { name, id, is_set, is_visible, } in children {
+                    self.collect(
                         f,
-                        rp.clone(),
-                        cp.clone(),
-                        config,
-                        characters,
-                        branch_style,
-                        leaf_style,
-                        level + 1,
+                        p,
+                        cp,
+                        ChildInfo {
+                            name: Cow::Borrowed(name),
+                            id: *id,
+                            is_set: *is_set,
+                            is_visible: *is_visible && parent_is_visible,
+                        },
                     )?;
                 }
 
-                let rp = child_prefix.clone() + &characters.last_regular_prefix;
-                let cp = child_prefix.clone() + &characters.last_child_prefix;
+                let (ref p, ref cp) = (
+                    child_prefix.to_owned() + "└─ ",
+                    child_prefix.to_owned() + "   ",
+                );
 
-                print_item(
-                    last_child,
+                #[rustfmt::skip]
+                let ChildInfo { name, id, is_set, is_visible, } = last_child;
+
+                self.collect(
                     f,
-                    rp,
+                    p,
                     cp,
-                    config,
-                    characters,
-                    branch_style,
-                    leaf_style,
-                    level + 1,
+                    ChildInfo {
+                        name: Cow::Borrowed(name),
+                        id: *id,
+                        is_set: *is_set,
+                        is_visible: *is_visible && parent_is_visible,
+                    },
                 )?;
-            }
-        }
+            };
 
-        Ok(())
+            Ok(())
+        }
     }
 
-    pub(crate) fn write_tree(
-        tree: StringItem,
-        f: &mut Formatter<'_>,
-    ) -> io::Result<()> {
-        let config = PrintConfig::from_env();
+    impl Display for LayerTree<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+            if let (true, false) = (f.alternate(), cfg!(feature = "colored")) {
+                panic!("Activate the `colored` feature to enable colored output.")
+            };
 
-        let (branch_style, leaf_style) = if config.should_style_output(OutputKind::Unknown) {
-            (config.branch.clone(), config.leaf.clone())
-        } else {
-            (Style::default(), Style::default())
-        };
-        let characters = Indent::from_config(&config);
-
-        print_item(
-            &tree,
-            f,
-            "".to_string(),
-            "".to_string(),
-            &config,
-            &characters,
-            &branch_style,
-            &leaf_style,
-            0,
-        )
+            self.collect_root(f)
+        }
     }
 }

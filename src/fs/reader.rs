@@ -8,7 +8,7 @@ use std::{
     mem::size_of,
 };
 
-/// Reads the contents of an `InodeType::File`.
+/// Reads the contents of an `InodeKind::File`.
 pub(crate) struct InodeReader<'a> {
     /// [`None`] if the file that we are reading from doesn't have more bytes to be read.
     data: BlockBuffer,
@@ -98,7 +98,7 @@ impl<'a> InodeReader<'a> {
     pub(crate) unsafe fn read_next_stream_header(
         &mut self,
     ) -> Option<([std::ffi::c_uchar; 4], u32)> {
-        // SAFETY: `c_uchar` is an alias of `u8`.
+        // SAFETY: c_uchar is an alias of u8.
         let mut tag: [std::ffi::c_uchar; 4] = unsafe { self.read_as() };
 
         if tag == [0, 0, 0, 0] {
