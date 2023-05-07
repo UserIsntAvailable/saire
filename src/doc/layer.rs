@@ -198,11 +198,48 @@ impl BlendingMode {
 pub struct LayerBounds {
     pub x: i32,
     pub y: i32,
-
     /// Always rounded to nearest multiple of 32.
     pub width: u32,
     /// Always rounded to nearest multiple of 32.
     pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextureName {
+    WatercolorA,
+    WatercolorB,
+    Paper,
+    Canvas,
+}
+
+impl TextureName {
+    fn new(name: &str) -> Result<Self> {
+        match name {
+            "Watercolor A" => Ok(Self::WatercolorA),
+            "Watercolor B" => Ok(Self::WatercolorB),
+            "Paper" => Ok(Self::Paper),
+            "Canvas" => Ok(Self::Canvas),
+            _ => Err(FormatError::Invalid.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Texture {
+    /// Name of the overlay-texture assigned to a layer. i.e: `Watercolor A`.
+    pub name: TextureName,
+    pub scale: u16,
+    pub opacity: u8,
+}
+
+impl Default for Texture {
+    fn default() -> Self {
+        Self {
+            name: TextureName::WatercolorA,
+            scale: 500,
+            opacity: 100,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +256,7 @@ pub struct Layer {
     pub visible: bool,
     /// If [`true`], locks transparent pixels, so that you can only paint in pixels that are opaque.
     pub preserve_opacity: bool,
+    /// If [`true`], this layer is clipped with the layer at the bottom.
     pub clipping: bool,
     pub blending_mode: BlendingMode,
 
@@ -236,11 +274,7 @@ pub struct Layer {
     pub parent_layer: Option<u32>,
     /// Wether or not a [`LayerKind::Set`] is expanded within the layers panel or not.
     pub open: Option<bool>,
-    /// Name of the overlay-texture assigned to a layer. i.e: `Watercolor A`. Only appears in layers
-    /// that have an overlay enabled.
-    pub texture_name: Option<String>,
-    pub texture_scale: Option<u16>,
-    pub texture_opacity: Option<u8>,
+    pub texture: Option<Texture>,
     /// The additional data of the layer.
     ///
     /// If the layer is [`LayerKind::Set`], there is no additional data. If the layer is
@@ -267,9 +301,9 @@ impl Layer {
         };
         let _: u32 = reader.read_as_num();
         let opacity: u8 = reader.read_as_num();
-        let visible: bool = reader.read_as_num::<u8>() >= 1;
-        let preserve_opacity: bool = reader.read_as_num::<u8>() >= 1;
-        let clipping: bool = reader.read_as_num::<u8>() >= 1;
+        let visible = reader.read_as_num::<u8>() >= 1;
+        let preserve_opacity = reader.read_as_num::<u8>() >= 1;
+        let clipping = reader.read_as_num::<u8>() >= 1;
         let _: u8 = reader.read_as_num();
 
         // SAFETY: c_uchar is an alias of u8.
@@ -290,9 +324,7 @@ impl Layer {
             parent_set: None,
             parent_layer: None,
             open: None,
-            texture_name: None,
-            texture_scale: None,
-            texture_opacity: None,
+            texture: None,
             data: None,
         };
 
@@ -317,16 +349,20 @@ impl Layer {
                 "texn" => {
                     // SAFETY: casting a *const u8 -> *const u8.
                     let buf: [u8; 64] = unsafe { reader.read_as() };
+                    let name = String::from_utf8_lossy(&buf);
+                    let name = TextureName::new(name.trim_end_matches("\0"))?;
 
-                    // SAFETY: buf is a valid pointer.
-                    let buf = unsafe { *(buf.as_ptr() as *const [u16; 32]) };
-                    let _ = layer
-                        .texture_name
-                        .insert(String::from_utf16_lossy(buf.as_slice()));
+                    layer.texture.get_or_insert_with(Default::default).name = name;
                 }
+                // This values are always set, even if `texn` isn't.
                 "texp" => {
-                    let _ = layer.texture_scale.insert(reader.read_as_num());
-                    let _ = layer.texture_opacity.insert(reader.read_as_num());
+                    let scale: u16 = reader.read_as_num();
+                    let opacity: u8 = reader.read_as_num();
+
+                    if let Some(ref mut texture) = layer.texture {
+                        texture.scale = scale;
+                        texture.opacity = opacity;
+                    };
                 }
                 _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
