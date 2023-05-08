@@ -83,7 +83,6 @@ fn main() -> Result<()> {
             .take(height);
 
         for (bg_chunk, fg_chunk) in image_bytes.chunks_exact_mut(width * 4).zip(fg_chunks) {
-            // TODO: I could skip x placement if the whole chunk is full of 0s.
             if layer.bounds.x < 0 {
                 rotate_left(fg_chunk, (layer.bounds.x.abs() as u32 * 4) as usize)
             } else {
