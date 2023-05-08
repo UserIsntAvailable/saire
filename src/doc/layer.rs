@@ -1,4 +1,5 @@
 use super::{create_png, Error, FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
+use itertools::Itertools;
 use linked_hash_map::LinkedHashMap;
 use std::{
     cmp::Ordering,
@@ -493,8 +494,6 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
 }
 
 fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -> Result<Vec<u8>> {
-    let coord_to_index = |x, y, stride| (x + (y * stride));
-
     const TILE_SIZE: usize = 32;
 
     let y_tiles = height / TILE_SIZE;
@@ -507,38 +506,35 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
     let mut rle_dst = [0; SAI_BLOCK_SIZE];
     let mut rle_src = [0; SAI_BLOCK_SIZE / 2];
 
-    for y in 0..y_tiles {
-        for x in 0..x_tiles {
-            // inactive tile.
-            if tile_map[coord_to_index(x, y, x_tiles)] == 0 {
-                continue;
+    let coord_to_index = |x, y, stride| (x + (y * stride));
+
+    for (y, x) in (0..y_tiles)
+        .cartesian_product(0..x_tiles)
+        .filter(|(y, x)| tile_map[coord_to_index(*x, *y, x_tiles)] != 0)
+    {
+        for channel in 0..8 {
+            let size: usize = reader.read_as_num::<u16>().into();
+            reader.read_with_size(&mut rle_src, size)?;
+
+            if channel < 4 {
+                rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
             }
+        }
 
-            // Reads BGRA channels. Skip the next 4 ( unknown ).
-            (0..8).try_for_each(|channel| {
-                let size: usize = reader.read_as_num::<u16>().into();
-                reader.read_with_size(&mut rle_src, size)?;
+        let offset = coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4;
+        const TILE_STRIDE_BYTES: usize = TILE_SIZE * 4;
 
-                if channel < 4 {
-                    rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
-                }
-
-                Ok::<_, Error>(())
-            })?;
-
-            let dest = &mut image_bytes[coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4..];
-
-            // Leave pre-multiplied.
-            for (i, chunk) in rle_dst.chunks_exact_mut(4).enumerate() {
-                // BGRA -> RGBA.
-                chunk.swap(0, 2);
-
-                for (dst, src) in dest[coord_to_index(i % TILE_SIZE, i / TILE_SIZE, width) * 4..]
-                    .iter_mut()
-                    .zip(chunk)
-                {
-                    *dst = *src
-                }
+        // Leaves pre-multiplied
+        for (i, src) in rle_dst.chunks_exact(TILE_STRIDE_BYTES).enumerate() {
+            // Swaps BGRA -> RGBA
+            for (dst, src) in image_bytes[width * i * 4 + offset..][..TILE_STRIDE_BYTES]
+                .chunks_exact_mut(4)
+                .zip(src.chunks_exact(4))
+            {
+                dst[0] = src[2];
+                dst[1] = src[1];
+                dst[2] = src[0];
+                dst[3] = src[3];
             }
         }
     }
