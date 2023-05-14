@@ -1,11 +1,11 @@
-use super::{create_png, Error, FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
+use super::{create_png, Error, FormatError, InodeReader, Result};
 use itertools::Itertools;
 use linked_hash_map::LinkedHashMap;
 use std::{
     cmp::Ordering,
     collections::HashMap,
     ffi::{c_uchar, CStr},
-    fs::File,
+    mem,
     ops::Index,
     path::Path,
 };
@@ -308,7 +308,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
+    pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_data: bool) -> Result<Self> {
         let kind = reader.read_as_num::<u32>();
         let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
         let kind = LayerKind::new(kind)?;
@@ -399,10 +399,42 @@ impl Layer {
             }
         }
 
-        if decompress_layer_data && kind == LayerKind::Regular {
-            let dimensions = (bounds.width as usize, bounds.height as usize);
-            let data = decompress_layer(dimensions, reader)?;
-            let _ = layer.data.insert(data);
+        let dimensions = (bounds.width as usize, bounds.height as usize);
+        layer.data = match kind {
+            LayerKind::Regular if decompress_data => {
+                Some(decompress_raster::<{ mem::size_of::<u32>() }>(
+                    reader,
+                    dimensions,
+                    #[inline]
+                    |channel, reader, buffer| {
+                        if channel == 3 {
+                            for channel in 0..4 {
+                                let size: usize = reader.read_as_num::<u16>().into();
+                                reader.read_with_size(buffer, size)?;
+                            }
+                        }
+
+                        Ok(())
+                    },
+                    #[inline]
+                    |dst, src| {
+                        // Swap BGRA -> RGBA
+                        dst[0] = src[2];
+                        dst[1] = src[1];
+                        dst[2] = src[0];
+                        dst[3] = src[3];
+                    },
+                )?)
+            }
+            LayerKind::Mask if decompress_data => {
+                Some(decompress_raster::<{ mem::size_of::<u16>() }>(
+                    reader,
+                    dimensions,
+                    |_, _, _| Ok(()),
+                    |dst, src| dst.copy_from_slice(src),
+                )?)
+            }
+            _ => None,
         };
 
         Ok(layer)
@@ -434,6 +466,7 @@ impl Layer {
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
     pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
         use crate::utils::pixel_ops::premultiplied_to_straight;
+        use std::fs::File;
 
         if let Some(ref image_data) = self.data {
             return Ok(create_png(
@@ -458,21 +491,18 @@ impl Layer {
     }
 }
 
-fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
-    const STRIDE: usize = std::mem::size_of::<u32>();
-    const STRIDE_COUNT: usize = SAI_BLOCK_SIZE / STRIDE;
+const TILE_SIZE: usize = 32;
+
+fn rle_decompress_stride<const BPP: usize>(dst: &mut [u8], src: &[u8]) {
+    debug_assert!(BPP == std::mem::size_of::<u16>() || BPP == std::mem::size_of::<u32>());
 
     let mut src = src.iter();
-    let mut dst = dst.iter_mut();
+    let mut dst = dst.iter_mut().step_by(BPP);
     let mut src = || src.next().expect("src has items");
-    let mut dst = || {
-        let value = dst.next().expect("dst has items");
-        dst.nth(STRIDE - 2); // This would the same as calling `next()` 3 times.
-        value
-    };
+    let mut dst = || dst.next().expect("dst has items");
 
     let mut wrote = 0;
-    while wrote < STRIDE_COUNT {
+    while wrote < TILE_SIZE * TILE_SIZE {
         let length = *src() as usize;
 
         wrote += match length.cmp(&128) {
@@ -494,23 +524,31 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-fn decompress_layer(
-    (width, height): (usize, usize),
-    reader: &mut InodeReader<'_>,
-) -> Result<Vec<u8>> {
-    const TILE_SIZE: usize = 32;
+// (channel, reader, buffer)
+type DecompressedChannelCb = fn(usize, &mut InodeReader<'_>, &mut [u8; 0x800]) -> Result<()>;
 
+// (dst, src)
+//
+// NIGHTLY: When `as_chunks/array_chunks` hits stable change parameters to [u8; BPP].
+type PixelWriteCb = fn(&mut [u8], &[u8]);
+
+fn decompress_raster<const BPP: usize>(
+    reader: &mut InodeReader<'_>,
+    (width, height): (usize, usize),
+    channel_decompressed: DecompressedChannelCb,
+    pixel_write: PixelWriteCb,
+) -> Result<Vec<u8>> {
     let tile_map_height = height / TILE_SIZE;
     let tile_map_width = width / TILE_SIZE;
 
     let mut tile_map = vec![0; tile_map_height * tile_map_width];
     reader.read_exact(&mut tile_map)?;
+    let tile_map = tile_map; // Prevents `tile_map` to be mutable.
 
-    // Prevents `tile_map` to be mutable.
-    let tile_map = tile_map;
-    let mut pixels = vec![0; width * height * 4];
-    let mut rle_dst = [0; SAI_BLOCK_SIZE];
-    let mut rle_src = [0; SAI_BLOCK_SIZE / 2];
+    let mut pixels = vec![0; width * height * BPP];
+    // NIGHTLY: const_generics_exprs
+    let mut rle_dst = vec![0; TILE_SIZE * TILE_SIZE * BPP];
+    let mut rle_src = [0; 0x800];
 
     let pos2idx = |y, x, stride| y * stride + x;
 
@@ -518,33 +556,27 @@ fn decompress_layer(
         .cartesian_product(0..tile_map_width)
         .filter(|(y, x)| tile_map[pos2idx(*y, *x, tile_map_width)] != 0)
     {
-        // Reads BGRA channels. Skip the next 4 ( unknown )
-        for channel in 0..8 {
+        for channel in 0..BPP {
             let size: usize = reader.read_as_num::<u16>().into();
             reader.read_with_size(&mut rle_src, size)?;
+            rle_decompress_stride::<BPP>(&mut rle_dst[channel..], &rle_src);
 
-            if channel < 4 {
-                rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
-            }
+            channel_decompressed(channel, reader, &mut rle_src)?;
         }
 
         // Leaves pre-multiplied
-        rle_dst.chunks_exact(TILE_SIZE * 4).fold(
+        rle_dst.chunks_exact(TILE_SIZE * BPP).fold(
             // Offset of first element on the 32x32 tile within the final image.
             pos2idx(y * width, x * TILE_SIZE, TILE_SIZE),
             |offset, src| {
-                // Swaps BGRA -> RGBA
-                for (dst, src) in pixels[offset * 4..]
-                    .chunks_exact_mut(4)
-                    .zip(src.chunks_exact(4))
+                for (dst, src) in pixels[offset * BPP..]
+                    .chunks_exact_mut(BPP)
+                    .zip(src.chunks_exact(BPP))
                 {
-                    dst[0] = src[2];
-                    dst[1] = src[1];
-                    dst[2] = src[0];
-                    dst[3] = src[3];
+                    pixel_write(dst, src);
                 }
 
-                // Skips `width` bytes to get the next row of the 32x32 tile.
+                // Skips `width` bytes to get the next row of the 32x32 tile map.
                 offset + width
             },
         );
@@ -552,18 +584,3 @@ fn decompress_layer(
 
     Ok(pixels)
 }
-// let offset = coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4;
-// const TILE_STRIDE_BYTES: usize = TILE_SIZE * 4;
-//
-// for (dst, src) in image_bytes[offset..]
-//     .chunks_exact_mut(TILE_STRIDE_BYTES)
-//     .step_by(x_tiles)
-//     .zip(rle_dst.chunks_exact(TILE_STRIDE_BYTES))
-// {
-//     for (dst, src) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-//         dst[0] = src[2];
-//         dst[1] = src[1];
-//         dst[2] = src[0];
-//         dst[3] = src[3];
-//     }
-// }

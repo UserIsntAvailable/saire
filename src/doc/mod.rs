@@ -10,10 +10,7 @@ use self::{
     thumbnail::Thumbnail,
 };
 use crate::{
-    block::{
-        data::{Inode, InodeKind},
-        SAI_BLOCK_SIZE,
-    },
+    block::data::{Inode, InodeKind},
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
