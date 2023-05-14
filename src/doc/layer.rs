@@ -1,13 +1,11 @@
-use super::{create_png, Error, FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
+use super::{FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
 use itertools::Itertools;
 use linked_hash_map::LinkedHashMap;
 use std::{
     cmp::Ordering,
     collections::HashMap,
     ffi::{c_uchar, CStr},
-    fs::File,
     ops::Index,
-    path::Path,
 };
 
 /// Holds information about the [`Layer`]s that make up a SAI image.
@@ -432,26 +430,31 @@ impl Layer {
     /// # Panics
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
-    pub fn to_png(&self, path: Option<impl AsRef<Path>>) -> Result<()> {
-        use crate::utils::pixel_ops::premultiplied_to_straight;
+    pub fn to_png<P>(&self, path: Option<P>) -> Result<()>
+    where
+        P: AsRef<std::path::Path>,
+    {
+        use crate::utils::{image::PngImage, pixel_ops::premultiplied_to_straight};
 
         if let Some(ref image_data) = self.data {
-            return Ok(create_png(
-                path.map_or_else(
-                    || {
-                        Ok::<File, Error>(File::create(format!(
-                            "{:0>8x}-{}.png",
-                            self.id,
-                            self.name.as_ref().unwrap()
-                        ))?)
-                    },
-                    |path| Ok(File::create(path)?),
-                )?,
-                self.bounds.width,
-                self.bounds.height,
-            )
-            .write_header()?
-            .write_image_data(&premultiplied_to_straight(image_data))?);
+            let png = PngImage {
+                width: self.bounds.width,
+                height: self.bounds.height,
+                ..Default::default()
+            };
+
+            let path = path.map_or_else(
+                || {
+                    std::path::PathBuf::from(format!(
+                        "{:0>8x}-{}.png",
+                        self.id,
+                        self.name.as_ref().unwrap()
+                    ))
+                },
+                |path| path.as_ref().to_path_buf(),
+            );
+
+            return Ok(png.save(&premultiplied_to_straight(image_data), path)?);
         }
 
         panic!("For now, saire can only decompress LayerKind::Regular data.");

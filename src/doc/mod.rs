@@ -14,8 +14,6 @@ use crate::{
     fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
-#[cfg(feature = "png")]
-use png::{Encoder, EncodingError};
 use std::{
     fmt::{Display, Formatter},
     fs::File,
@@ -80,33 +78,6 @@ impl From<FormatError> for Error {
     fn from(err: FormatError) -> Self {
         Self::Format(err)
     }
-}
-
-#[cfg(feature = "png")]
-impl From<EncodingError> for Error {
-    fn from(err: EncodingError) -> Self {
-        use EncodingError::*;
-
-        match err {
-            IoError(io) => io.into(),
-            // FIX: Too many errors to match, I will give it a look later.
-            //
-            // In theory if the image format is always BM32 this should be unreachable; gonna
-            // continue investigating this later.
-            Format(_) => Self::Unknown(),
-            Parameter(_) => Self::Unknown(),
-            LimitsExceeded => Self::Unknown(),
-        }
-    }
-}
-
-#[cfg(feature = "png")]
-pub(crate) fn create_png<'a>(file: File, width: u32, height: u32) -> Encoder<'a, File> {
-    let mut png = Encoder::new(file, width, height);
-    png.set_color(png::ColorType::Rgba);
-    png.set_depth(png::BitDepth::Eight);
-
-    png
 }
 
 impl std::error::Error for Error {}
