@@ -400,7 +400,8 @@ impl Layer {
         }
 
         if decompress_layer_data && kind == LayerKind::Regular {
-            let data = decompress_layer(bounds.width as usize, bounds.height as usize, reader)?;
+            let dimensions = (bounds.width as usize, bounds.height as usize);
+            let data = decompress_layer(dimensions, reader)?;
             let _ = layer.data.insert(data);
         };
 
@@ -493,25 +494,31 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -> Result<Vec<u8>> {
+fn decompress_layer(
+    (width, height): (usize, usize),
+    reader: &mut InodeReader<'_>,
+) -> Result<Vec<u8>> {
     const TILE_SIZE: usize = 32;
 
-    let y_tiles = height / TILE_SIZE;
-    let x_tiles = width / TILE_SIZE;
+    let tile_map_height = height / TILE_SIZE;
+    let tile_map_width = width / TILE_SIZE;
 
-    let mut tile_map = vec![0; y_tiles * x_tiles];
+    let mut tile_map = vec![0; tile_map_height * tile_map_width];
     reader.read_exact(&mut tile_map)?;
 
-    let mut image_bytes = vec![0; width * height * 4];
+    // Prevents `tile_map` to be mutable.
+    let tile_map = tile_map;
+    let mut pixels = vec![0; width * height * 4];
     let mut rle_dst = [0; SAI_BLOCK_SIZE];
     let mut rle_src = [0; SAI_BLOCK_SIZE / 2];
 
-    let coord_to_index = |x, y, stride| (x + (y * stride));
+    let pos2idx = |y, x, stride| y * stride + x;
 
-    for (y, x) in (0..y_tiles)
-        .cartesian_product(0..x_tiles)
-        .filter(|(y, x)| tile_map[coord_to_index(*x, *y, x_tiles)] != 0)
+    for (y, x) in (0..tile_map_height)
+        .cartesian_product(0..tile_map_width)
+        .filter(|(y, x)| tile_map[pos2idx(*y, *x, tile_map_width)] != 0)
     {
+        // Reads BGRA channels. Skip the next 4 ( unknown )
         for channel in 0..8 {
             let size: usize = reader.read_as_num::<u16>().into();
             reader.read_with_size(&mut rle_src, size)?;
@@ -521,23 +528,42 @@ fn decompress_layer(width: usize, height: usize, reader: &mut InodeReader<'_>) -
             }
         }
 
-        let offset = coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4;
-        const TILE_STRIDE_BYTES: usize = TILE_SIZE * 4;
-
         // Leaves pre-multiplied
-        for (i, src) in rle_dst.chunks_exact(TILE_STRIDE_BYTES).enumerate() {
-            // Swaps BGRA -> RGBA
-            for (dst, src) in image_bytes[width * i * 4 + offset..][..TILE_STRIDE_BYTES]
-                .chunks_exact_mut(4)
-                .zip(src.chunks_exact(4))
-            {
-                dst[0] = src[2];
-                dst[1] = src[1];
-                dst[2] = src[0];
-                dst[3] = src[3];
-            }
-        }
+        rle_dst.chunks_exact(TILE_SIZE * 4).fold(
+            // Offset of first element on the 32x32 tile within the final image.
+            pos2idx(y * width, x * TILE_SIZE, TILE_SIZE),
+            |offset, src| {
+                // Swaps BGRA -> RGBA
+                for (dst, src) in pixels[offset * 4..]
+                    .chunks_exact_mut(4)
+                    .zip(src.chunks_exact(4))
+                {
+                    dst[0] = src[2];
+                    dst[1] = src[1];
+                    dst[2] = src[0];
+                    dst[3] = src[3];
+                }
+
+                // Skips `width` bytes to get the next row of the 32x32 tile.
+                offset + width
+            },
+        );
     }
 
-    Ok(image_bytes)
+    Ok(pixels)
 }
+// let offset = coord_to_index(x * TILE_SIZE, y * width, TILE_SIZE) * 4;
+// const TILE_STRIDE_BYTES: usize = TILE_SIZE * 4;
+//
+// for (dst, src) in image_bytes[offset..]
+//     .chunks_exact_mut(TILE_STRIDE_BYTES)
+//     .step_by(x_tiles)
+//     .zip(rle_dst.chunks_exact(TILE_STRIDE_BYTES))
+// {
+//     for (dst, src) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+//         dst[0] = src[2];
+//         dst[1] = src[1];
+//         dst[2] = src[0];
+//         dst[3] = src[3];
+//     }
+// }
