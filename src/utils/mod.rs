@@ -1,5 +1,45 @@
 pub mod pixel_ops;
 
+#[cfg(feature = "png")]
+pub mod image {
+    use png::{BitDepth, ColorType, Encoder};
+    use std::{fs, io, path::Path};
+
+    /// New type to create 8bpc images.
+    pub struct PngImage {
+        pub color: ColorType,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    impl PngImage {
+        /// Saves bytes to the provided path.
+        pub fn save<P>(self, bytes: &[u8], path: P) -> io::Result<()>
+        where
+            P: AsRef<Path>,
+        {
+            let file = fs::File::create(path)?;
+
+            let mut encoder = Encoder::new(file, self.width, self.height);
+            encoder.set_color(self.color);
+            encoder.set_depth(BitDepth::Eight);
+
+            Ok(encoder.write_header()?.write_image_data(bytes)?)
+        }
+    }
+
+    impl Default for PngImage {
+        /// Creates `128x128` image with `Rgba` of ColorType.
+        fn default() -> Self {
+            Self {
+                color: ColorType::Rgba,
+                width: 128,
+                height: 128,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod path {
     use std::path::{Path, PathBuf};

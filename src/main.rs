@@ -1,13 +1,12 @@
 #![allow(unused_variables)]
 #![feature(stmt_expr_attributes, core_intrinsics)]
 
-use png::Encoder;
 use saire::{
     doc::layer::{BlendingMode, LayerKind},
-    utils::pixel_ops::*,
+    utils::{image::PngImage, pixel_ops::*},
     Result, SaiDocument,
 };
-use std::{collections::HashSet, fs::File, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf};
 
 // TODO: Instead of using `rotate_{left,right}` I could instead use `slice::ptr_rotate()`.
 
@@ -120,12 +119,13 @@ fn main() -> Result<()> {
         }
     }
 
-    let mut png = Encoder::new(File::create(output)?, width as u32, height as u32);
-    png.set_color(png::ColorType::Rgba);
-    png.set_depth(png::BitDepth::Eight);
+    let png = PngImage {
+        width: width as u32,
+        height: height as u32,
+        ..Default::default()
+    };
 
-    png.write_header()?
-        .write_image_data(&premultiplied_to_straight(&image_bytes))?;
+    png.save(&premultiplied_to_straight(&image_bytes), output)?;
 
     Ok(())
 }
