@@ -34,7 +34,7 @@ type InodeBuffer = [Inode; SAI_BLOCK_SIZE / size_of::<Inode>()];
 /// rotated left 1 bit before the exclusive-or operation. Finally the lowest bit is set, making
 /// all checksums an odd number.
 ///
-/// ## Notes
+/// ## Block Corruption
 ///
 /// ### DataBlock
 ///
@@ -56,14 +56,7 @@ fn to_u32(bytes: &[u8]) -> DecryptedBuffer {
 
     let bytes = bytes.as_ptr() as *const u32;
 
-    // SAFETY: bytes is a valid pointer.
-    //
-    // - `bytes` contains contiguous data, because it is an array of `u8`s.
-    //
-    // - since `bytes.len` needs to be equal to `SAI_BLOCK_SIZE`, then size for the slice needs
-    // to be `SAI_BLOCK_SIZE / 4` ( DATA_SIZE ), because u32 is 4 times bigger than a u8.
-    //
-    // - slice ( the return value ), will not be modified, since it is not a &mut.
+    // UNSOUND: accessing memory with alignment 1, but alignment 4 is required.
     let slice = unsafe { std::slice::from_raw_parts(bytes, DECRYPTED_BUFFER_SIZE) };
 
     slice.try_into().unwrap()
@@ -142,32 +135,28 @@ const LOCAL_STATE: [u32; 256] = [
 #[cfg(test)]
 mod tests {
     use super::{data::*, table::*, *};
-    use crate::utils::path::read_res;
-    use lazy_static::lazy_static;
-    use std::fs::read;
+    use crate::utils::tests::SAMPLE as BYTES;
 
-    lazy_static! {
-        static ref BYTES: Vec<u8> = read(read_res("sample.sai")).unwrap();
-        static ref TABLE: &'static [u8] = &BYTES[..SAI_BLOCK_SIZE];
-        /// The second `Data` block, which is the ROOT of the sai file system.
-        static ref DATA: &'static [u8] = &BYTES[SAI_BLOCK_SIZE * 2..SAI_BLOCK_SIZE * 3];
-    }
+    #[rustfmt::skip] #[inline(always)]
+    fn table() -> &'static [u8] { &BYTES[..SAI_BLOCK_SIZE] }
+    #[rustfmt::skip] #[inline(always)]
+    fn data() -> &'static [u8] { &BYTES[SAI_BLOCK_SIZE * 2..][..SAI_BLOCK_SIZE] }
 
     #[test]
     fn table_new_works() {
-        assert!(TableBlock::new(*TABLE, 0).is_some());
+        assert!(TableBlock::new(table(), 0).is_some());
     }
 
     #[test]
     fn data_new_works() {
-        let table_entries = TableBlock::new(*TABLE, 0).unwrap().entries;
-        assert!(DataBlock::new(*DATA, table_entries[2].checksum).is_some());
+        let table_entries = TableBlock::new(table(), 0).unwrap().entries;
+        assert!(DataBlock::new(data(), table_entries[2].checksum).is_some());
     }
 
     #[test]
     fn data_new_has_valid_data() {
-        let table_entries = TableBlock::new(*TABLE, 0).unwrap().entries;
-        let data_block = DataBlock::new(*DATA, table_entries[2].checksum).unwrap();
+        let table_entries = TableBlock::new(table(), 0).unwrap().entries;
+        let data_block = DataBlock::new(data(), table_entries[2].checksum).unwrap();
         let inodes = data_block.as_inodes();
         let inode = &inodes[0];
 

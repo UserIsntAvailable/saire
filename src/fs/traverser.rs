@@ -78,20 +78,14 @@ mod tests {
     use super::*;
     use crate::{
         block::data::{Inode, InodeKind},
-        utils::path::read_res,
+        utils::tests::SAMPLE as BYTES,
     };
     use eyre::Result;
-    use lazy_static::lazy_static;
     use std::{
         cell::{Cell, RefCell},
         fmt::Display,
-        fs::read,
     };
     use tabular::{Row, Table};
-
-    lazy_static! {
-        static ref BYTES: Vec<u8> = read(read_res("sample.sai")).unwrap();
-    }
 
     #[test]
     // Cool tree view of the underlying sai file system. Keeping it here to make sure the file is being read correctly :).
@@ -155,7 +149,7 @@ mod tests {
         }
 
         let visitor = TreeVisitor::default();
-        FileSystemReader::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
+        FileSystemReader::from(BYTES).traverse_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
             format!("\n{visitor}"),
@@ -176,8 +170,7 @@ mod tests {
     fn traverser_returns_stopped_inode() {
         const EXPECTED: &str = "canvas";
 
-        let actual =
-            FileSystemReader::from(BYTES.as_slice()).traverse_root(|_, i| i.name() == EXPECTED);
+        let actual = FileSystemReader::from(BYTES).traverse_root(|_, i| i.name() == EXPECTED);
 
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().name(), EXPECTED);

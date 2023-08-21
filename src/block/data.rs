@@ -108,7 +108,7 @@ impl DataBlock {
     pub(crate) fn as_inodes(&self) -> &InodeBuffer {
         let ptr = self.u32.as_ptr();
 
-        // SAFETY: ptr is a valid pointer and Inode is #[repr(C)].
+        // UNSOUND: misaligned pointer dereference: address must be a multiple of 0x8 but is 0x7f4429ffc464
         unsafe { &*(ptr as *const InodeBuffer) }
     }
 }

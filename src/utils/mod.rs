@@ -45,14 +45,16 @@ pub(crate) mod path {
     use std::path::{Path, PathBuf};
 
     /// Gets a file from `resources` folder.
-    pub(crate) fn read_res(res: impl AsRef<Path>) -> String {
+    pub(crate) fn read_res(res: impl AsRef<Path>) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join(".resources")
             .join(res)
-            .to_str()
-            .unwrap()
-            .into()
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    pub(crate) const SAMPLE: &[u8] = include_bytes!("../../.resources/sample.sai");
 }
 
 pub(crate) mod time {

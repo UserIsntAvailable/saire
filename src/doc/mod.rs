@@ -212,22 +212,16 @@ impl Display for SaiDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        doc::canvas::{ResolutionUnit, SizeUnit},
-        doc::layer::LayerKind,
-        utils::path::read_res,
+    use super::{
+        canvas::{ResolutionUnit, SizeUnit},
+        layer::LayerKind,
+        Result, SaiDocument,
     };
-    use lazy_static::lazy_static;
-    use std::fs::read;
-
-    lazy_static! {
-        static ref BYTES: Vec<u8> = read(read_res("sample.sai")).unwrap();
-    }
+    use crate::utils::tests::SAMPLE as BYTES;
 
     #[test]
     fn author_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let author = doc.author()?;
 
         assert_eq!(author.date_created, 1566984405);
@@ -239,7 +233,7 @@ mod tests {
 
     #[test]
     fn laybtl_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let laytbl = doc.laytbl()?;
 
         use std::ops::Index;
@@ -253,7 +247,7 @@ mod tests {
 
     #[test]
     fn layers_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let layers = doc.layers_no_decompress()?;
 
         // FIX: More tests
@@ -264,7 +258,7 @@ mod tests {
 
     #[test]
     fn canvas_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let author = doc.canvas()?;
 
         assert_eq!(author.alignment, 16);
@@ -281,13 +275,13 @@ mod tests {
 
     #[test]
     fn subtbl_is_err() {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         assert!(doc.subtbl().is_err());
     }
 
     #[test]
     fn sublayers_is_err() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         assert!(doc.sublayers().is_err());
 
         Ok(())
@@ -295,7 +289,7 @@ mod tests {
 
     #[test]
     fn thumbnail_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let thumbnail = doc.thumbnail()?;
 
         assert_eq!(thumbnail.width, 140);
@@ -307,7 +301,7 @@ mod tests {
 
     #[test]
     fn display_works() {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let output = doc.to_string();
 
         assert_eq!(
