@@ -10,8 +10,8 @@ use self::{
     thumbnail::Thumbnail,
 };
 use crate::{
-    block::{data::Inode, SAI_BLOCK_SIZE},
-    fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
+    block::FatEntry,
+    fs::{reader::FatEntryReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
 use std::{
@@ -95,7 +95,7 @@ macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
-            let mut reader = InodeReader::new(&self.fs, &file);
+            let mut reader = FatEntryReader::new(&self.fs, &file);
             <$return_type>::new(&mut reader)
         }
     };
@@ -141,7 +141,7 @@ impl SaiDocument {
         }
     }
 
-    fn traverse_until(&self, filename: &str) -> Result<Inode> {
+    fn traverse_until(&self, filename: &str) -> Result<FatEntry> {
         self.fs
             .traverse_root(|_, i| i.name().contains(filename))
             .ok_or(FormatError::MissingEntry(filename.to_string()).into())
@@ -165,11 +165,10 @@ impl SaiDocument {
             )
             .flat_map(|folder| {
                 folder
-                    .as_inodes()
                     .iter()
                     .filter(|i| i.flags() != 0)
                     .map(|i| {
-                        let mut reader = InodeReader::new(&self.fs, &i);
+                        let mut reader = FatEntryReader::new(&self.fs, &i);
                         Layer::new(&mut reader, decompress_layers)
                     })
                     .collect::<Vec<_>>()

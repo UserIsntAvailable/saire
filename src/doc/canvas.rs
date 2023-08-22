@@ -1,4 +1,4 @@
-use super::{FormatError, InodeReader, Result};
+use super::{FatEntryReader, FormatError, Result};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
         let alignment: u32 = reader.read_as_num();
 
         if alignment != 16 {

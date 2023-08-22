@@ -1,4 +1,5 @@
-use super::{FormatError, InodeReader, Result, SAI_BLOCK_SIZE};
+use super::{FatEntryReader, FormatError, Result};
+use crate::block::BLOCK_SIZE;
 use itertools::Itertools;
 use linked_hash_map::LinkedHashMap;
 use std::{
@@ -44,7 +45,7 @@ use std::{
 pub struct LayerTable(LinkedHashMap<u32, LayerKind>);
 
 impl LayerTable {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
         Ok(LayerTable(
             (0..reader.read_as_num())
                 .map(|_| {
@@ -306,7 +307,10 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_layer_data: bool) -> Result<Self> {
+    pub(crate) fn new(
+        reader: &mut FatEntryReader<'_>,
+        decompress_layer_data: bool,
+    ) -> Result<Self> {
         let kind = reader.read_as_num::<u32>();
         let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
         let kind = LayerKind::new(kind)?;
@@ -463,7 +467,7 @@ impl Layer {
 
 fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     const STRIDE: usize = std::mem::size_of::<u32>();
-    const STRIDE_COUNT: usize = SAI_BLOCK_SIZE / STRIDE;
+    const STRIDE_COUNT: usize = BLOCK_SIZE / STRIDE;
 
     let mut src = src.iter();
     let mut dst = dst.iter_mut();
@@ -499,7 +503,7 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
 
 fn decompress_layer(
     (width, height): (usize, usize),
-    reader: &mut InodeReader<'_>,
+    reader: &mut FatEntryReader<'_>,
 ) -> Result<Vec<u8>> {
     const TILE_SIZE: usize = 32;
 
@@ -512,8 +516,8 @@ fn decompress_layer(
     // Prevents `tile_map` to be mutable.
     let tile_map = tile_map;
     let mut pixels = vec![0; width * height * 4];
-    let mut rle_dst = [0; SAI_BLOCK_SIZE];
-    let mut rle_src = [0; SAI_BLOCK_SIZE / 2];
+    let mut rle_dst = [0; BLOCK_SIZE];
+    let mut rle_src = [0; BLOCK_SIZE / 2];
 
     let pos2idx = |y, x, stride| y * stride + x;
 

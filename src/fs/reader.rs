@@ -1,8 +1,5 @@
 use super::FileSystemReader;
-use crate::block::{
-    data::{Inode, InodeKind},
-    BlockBuffer, SAI_BLOCK_SIZE,
-};
+use crate::block::{FatEntry, FatKind, VirtualPage, BLOCK_SIZE};
 use crate::Result;
 use num_traits::Num;
 use std::{
@@ -10,22 +7,22 @@ use std::{
     mem::size_of,
 };
 
-/// Reads the contents of an `InodeKind::File`.
-pub(crate) struct InodeReader<'a> {
+/// Reads the contents of an `FatKind::File`.
+pub(crate) struct FatEntryReader<'a> {
     /// Will be None if no read*() calls have been made; Also, if the file that we are reading from
     /// doesn't have no more bytes to be read.
     cur_block: Option<u32>,
-    file_reader: Option<Cursor<BlockBuffer>>,
+    cursor: Option<Cursor<VirtualPage>>,
     fs: &'a FileSystemReader,
 }
 
-impl<'a> InodeReader<'a> {
-    pub(crate) fn new(fs: &'a FileSystemReader, inode: &Inode) -> Self {
-        debug_assert!(inode.kind() == &InodeKind::File);
+impl<'a> FatEntryReader<'a> {
+    pub(crate) fn new(fs: &'a FileSystemReader, entry: &FatEntry) -> Self {
+        debug_assert!(entry.kind() == FatKind::File);
 
         Self {
-            cur_block: Some(inode.next_block()),
-            file_reader: None,
+            cur_block: Some(entry.next_block()),
+            cursor: None,
             fs,
         }
     }
@@ -41,10 +38,10 @@ impl<'a> InodeReader<'a> {
         let mut writer = BufWriter::new(buffer);
 
         loop {
-            if let Some(ref mut reader) = self.file_reader {
+            if let Some(ref mut reader) = self.cursor {
                 let position = reader.position() as usize;
 
-                if left_to_read + position >= SAI_BLOCK_SIZE {
+                if left_to_read + position >= BLOCK_SIZE {
                     // This will be the same as doing:
                     //
                     // let mut bytes = Vec::new();
@@ -52,11 +49,11 @@ impl<'a> InodeReader<'a> {
                     //
                     // However, preallocating the Vec should be faster, and also I can guaranteed
                     // that the exactly amount of bytes are being read.
-                    let mut bytes = vec![0; SAI_BLOCK_SIZE - position];
+                    let mut bytes = vec![0; BLOCK_SIZE - position];
                     reader.read_exact(&mut bytes)?;
                     writer.write(&bytes)?;
 
-                    self.file_reader = None;
+                    self.cursor = None;
                     left_to_read -= bytes.len();
                 } else {
                     let mut bytes = vec![0; left_to_read];
@@ -67,9 +64,9 @@ impl<'a> InodeReader<'a> {
                 }
             } else {
                 if let Some(cur_block) = self.cur_block {
-                    let (datablock, next_block) = self.fs.read_data(cur_block as usize);
-
-                    self.file_reader = Some(Cursor::new(datablock.as_bytes().to_owned()));
+                    let (data, next_block) = self.fs.read_data(cur_block as usize);
+                    let virtual_page = data.into_virtual_page();
+                    self.cursor = Some(Cursor::new(virtual_page));
                     self.cur_block = next_block;
                 } else {
                     panic!("End of file.");

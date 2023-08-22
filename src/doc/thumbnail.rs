@@ -1,4 +1,4 @@
-use super::{FormatError, InodeReader, Result};
+use super::{FatEntryReader, FormatError, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumbnail {
@@ -11,7 +11,7 @@ pub struct Thumbnail {
 }
 
 impl Thumbnail {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
         let width: u32 = reader.read_as_num();
         let height: u32 = reader.read_as_num();
 

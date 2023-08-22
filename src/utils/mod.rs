@@ -59,7 +59,7 @@ pub(crate) mod tests {
 
 pub(crate) mod time {
     /// Converts a `Windows FILETIME` timestamp to an `epoch` timestamp.
-    pub(crate) fn to_epoch(w_timestamp: u64) -> u64 {
+    pub(crate) const fn to_epoch(w_timestamp: u64) -> u64 {
         w_timestamp / 10000000 - 11644473600
     }
 }

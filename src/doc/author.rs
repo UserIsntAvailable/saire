@@ -1,4 +1,4 @@
-use super::{utils, InodeReader, Result};
+use super::{utils, FatEntryReader, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Author {
@@ -17,7 +17,7 @@ pub struct Author {
 }
 
 impl Author {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
         let bitflag: u32 = reader.read_as_num();
 
         if bitflag >> 24 != 0x80 {
