@@ -202,7 +202,7 @@ impl From<&[u8]> for SaiDocument {
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
-        self.laytbl().unwrap().order(&mut layers);
+        self.laytbl().unwrap().sort_layers(&mut layers);
         layers.reverse();
 
         utils::tree::LayerTree::new(layers).fmt(f)
@@ -216,7 +216,7 @@ mod tests {
         layer::LayerKind,
         Result, SaiDocument,
     };
-    use crate::utils::tests::SAMPLE as BYTES;
+    use crate::{doc::layer::LayerRef, utils::tests::SAMPLE as BYTES};
 
     #[test]
     fn author_works() -> Result<()> {
@@ -235,10 +235,17 @@ mod tests {
         let doc = SaiDocument::from(BYTES);
         let laytbl = doc.laytbl()?;
 
-        use std::ops::Index;
+        const ID: u32 = 2;
 
-        assert_eq!(laytbl.index(2), &LayerKind::Regular);
-        assert_eq!(laytbl.order_of(2).unwrap(), 0);
+        assert_eq!(
+            laytbl[ID],
+            LayerRef {
+                id: ID,
+                kind: LayerKind::Regular,
+                tile_height: 78
+            }
+        );
+        assert_eq!(laytbl.get_index_of(ID).unwrap(), 0);
         assert_eq!(laytbl.into_iter().count(), 1);
 
         Ok(())

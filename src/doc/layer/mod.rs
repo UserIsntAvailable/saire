@@ -1,125 +1,14 @@
+mod table;
+
 use super::{FatEntryReader, FormatError, Result};
 use crate::block::BLOCK_SIZE;
 use itertools::Itertools;
-use linked_hash_map::LinkedHashMap;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     ffi::{c_uchar, CStr},
-    ops::Index,
 };
 
-/// Holds information about the [`Layer`]s that make up a SAI image.
-///
-/// This is used to keep track of 3 properties of a [`Layer`]:
-///
-/// - id
-/// - kind
-/// - order/rank
-///
-/// Where order/rank refers to the index from `lowest` to `highest` where the layer is placed in the
-/// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
-///
-/// To get the [`LayerKind`], you can use [`index`]. To get the order of a [`Layer`], you can use
-/// [`order_of`].
-///
-/// [`index`]: LayerTable::index
-/// [`order_of`]: LayerTable::order_of
-///
-/// # Examples
-///
-/// ```no_run
-/// use saire::{SaiDocument, Result};
-///
-/// fn main() -> Result<()> {
-///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
-///     // subtbl works the same in the same way.
-///     let laytbl = doc.laytbl()?;
-///     
-///     // id = 2 is `usually` the first layer.
-///     assert_eq!(laytbl.order_of(2), Some(0));
-///
-///     Ok(())
-/// }
-/// ```
-pub struct LayerTable(LinkedHashMap<u32, LayerKind>);
-
-impl LayerTable {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
-        Ok(LayerTable(
-            (0..reader.read_u32()?)
-                .map(|_| {
-                    let id = reader.read_u32()?;
-
-                    let kind = LayerKind::new(reader.read_u16()?)?;
-
-                    // Gets sent as windows message 0x80CA for some reason.
-                    //
-                    // 1       if LayerKind::Set.
-                    // 157/158 if LayerKind::Regular.
-                    let _ = reader.read_u16()?;
-
-                    Ok((id, kind))
-                })
-                .collect::<Result<_>>()?,
-        ))
-    }
-
-    /// Gets the order of the specified layer `id`.
-    pub fn order_of(&self, id: u32) -> Option<usize> {
-        self.0.keys().position(|v| *v == id)
-    }
-
-    /// Modifies a <code>[Vec]<[Layer]></code> to be ordered from `lowest` to `highest`.
-    ///
-    /// If you ever wanna return to the original order you can sort by [`Layer::id`].
-    ///
-    /// # Panics
-    ///
-    /// - If any of the of the [`Layer::id`]'s is not available in the [`LayerTable`].
-    pub fn order(&self, layers: &mut Vec<Layer>) {
-        let keys = self
-            .0
-            .keys()
-            .enumerate()
-            .map(|(i, k)| (k, i))
-            .collect::<HashMap<_, _>>();
-
-        layers.sort_by_cached_key(|e| keys[&e.id])
-    }
-}
-
-impl Index<u32> for LayerTable {
-    type Output = LayerKind;
-
-    /// Gets the [`LayerKind`] of the specified layer `id`.
-    ///
-    /// # Panics
-    ///
-    /// - If the id wasn't found.
-    fn index(&self, id: u32) -> &Self::Output {
-        &self.0[&id]
-    }
-}
-
-pub struct IntoIter(linked_hash_map::IntoIter<u32, LayerKind>);
-
-impl Iterator for IntoIter {
-    type Item = (u32, LayerKind);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
-impl IntoIterator for LayerTable {
-    type Item = (u32, LayerKind);
-    type IntoIter = IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        IntoIter(self.0.into_iter())
-    }
-}
+pub use table::{LayerRef, LayerTable};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -430,6 +319,7 @@ impl Layer {
     /// # Panics
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
+    // TODO(Unavailable): size_hint: Option<SizeHint>
     pub fn to_png<P>(&self, path: Option<P>) -> Result<()>
     where
         P: AsRef<std::path::Path>,
