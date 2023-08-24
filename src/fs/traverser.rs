@@ -104,10 +104,10 @@ mod tests {
                     TraverseEvent::File => self.add_row(entry),
                     TraverseEvent::FolderStart => {
                         self.add_row(entry);
-                        self.depth.update(|v| v + 1);
+                        self.depth.set(self.depth.get() + 1);
                     }
                     TraverseEvent::FolderEnd => {
-                        self.depth.update(|v| v - 1);
+                        self.depth.set(self.depth.get() - 1);
                     }
                 };
 

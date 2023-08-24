@@ -176,8 +176,13 @@ pub(crate) mod tree {
                     child_prefix.to_owned() + "│  ",
                 );
 
-                #[rustfmt::skip]
-                for ChildInfo { name, id, is_set, is_visible, } in children {
+                for ChildInfo {
+                    name,
+                    id,
+                    is_set,
+                    is_visible,
+                } in children
+                {
                     self.collect(
                         f,
                         p,

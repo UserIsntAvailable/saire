@@ -173,7 +173,6 @@ impl BlendingMode {
     fn new(bytes: [c_uchar; 4]) -> Result<Self> {
         use BlendingMode::*;
 
-        #[rustfmt::skip]
         // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
         match unsafe { std::str::from_utf8_unchecked(&bytes) } {
             "pass" => Ok(PassThrough),

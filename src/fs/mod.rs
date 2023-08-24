@@ -56,10 +56,19 @@ impl FileSystemReader {
     ///
     /// If at any moment, the `FileSystemReader` encounters an invalid `SaiBlock`.
     pub(crate) fn new_unchecked(mut reader: impl ReadSeek + 'static) -> Self {
+        // copied from stream_len() from std nightly.
+        let stream_len = {
+            let old_pos = reader.stream_position().unwrap();
+            let len = reader.seek(std::io::SeekFrom::End(0)).unwrap();
+            reader.seek(std::io::SeekFrom::Start(old_pos)).unwrap();
+
+            len
+        };
+
         assert_eq!(
-            reader.stream_len().unwrap() & 0x1FF,
+            stream_len & 0x1FF,
             0,
-            "the reader's bytes are not be block aligned.",
+            "the reader's bytes are not be block aligned."
         );
 
         Self {
