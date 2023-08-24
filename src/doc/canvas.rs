@@ -9,6 +9,20 @@ pub enum SizeUnit {
     Milimeters,
 }
 
+impl SizeUnit {
+    fn new(value: u16) -> Result<Self> {
+        use SizeUnit::*;
+
+        Ok(match value {
+            0 => Pixels,
+            1 => Inch,
+            2 => Centimeters,
+            3 => Milimeters,
+            _ => return Err(FormatError::Invalid.into()),
+        })
+    }
+}
+
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResolutionUnit {
@@ -17,6 +31,19 @@ pub enum ResolutionUnit {
     /// pixels/cm
     PixelsCm,
 }
+
+impl ResolutionUnit {
+    fn new(value: u16) -> Result<Self> {
+        use ResolutionUnit::*;
+
+        Ok(match value {
+            0 => PixelsInch,
+            1 => PixelsCm,
+            _ => return Err(FormatError::Invalid.into()),
+        })
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Canvas {
@@ -41,14 +68,14 @@ pub struct Canvas {
 
 impl Canvas {
     pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
-        let alignment: u32 = reader.read_as_num();
+        let alignment = reader.read_u32()?;
 
         if alignment != 16 {
             return Err(FormatError::Invalid.into());
         }
 
-        let width: u32 = reader.read_as_num();
-        let height: u32 = reader.read_as_num();
+        let width = reader.read_u32()?;
+        let height = reader.read_u32()?;
 
         let mut canvas = Self {
             alignment,
@@ -69,16 +96,18 @@ impl Canvas {
                     // Conversion from 16.16 fixed point integer to a float.
                     let _ = canvas
                         .dots_per_inch
-                        .insert(reader.read_as_num::<u32>() as f32 / 65536f32);
+                        .insert(reader.read_u32()? as f32 / 65536f32);
 
-                    // SAFETY: SizeUnit is #[repr(u16)].
-                    let _ = canvas.size_unit.insert(unsafe { reader.read_as() });
+                    let size_unit = reader.read_u16()?;
+                    let size_unit = SizeUnit::new(size_unit)?;
+                    let _ = canvas.size_unit.insert(size_unit);
 
-                    // SAFETY: ResolutionUnit is #[repr(u16)].
-                    let _ = canvas.resolution_unit.insert(unsafe { reader.read_as() });
+                    let resolution_unit = reader.read_u16()?;
+                    let resolution_unit = ResolutionUnit::new(resolution_unit)?;
+                    let _ = canvas.resolution_unit.insert(resolution_unit);
                 }
-                "wsrc" => drop(canvas.selection_source.insert(reader.read_as_num())),
-                "layr" => drop(canvas.selected_layer.insert(reader.read_as_num())),
+                "wsrc" => drop(canvas.selection_source.insert(reader.read_u32()?)),
+                "layr" => drop(canvas.selected_layer.insert(reader.read_u32()?)),
                 _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
         }

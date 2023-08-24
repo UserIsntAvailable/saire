@@ -12,11 +12,10 @@ pub struct Thumbnail {
 
 impl Thumbnail {
     pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
-        let width: u32 = reader.read_as_num();
-        let height: u32 = reader.read_as_num();
+        let width = reader.read_u32()?;
+        let height = reader.read_u32()?;
 
-        // SAFETY: c_uchar is an alias of u8.
-        let magic: [std::ffi::c_uchar; 4] = unsafe { reader.read_as() };
+        let magic = reader.read_array::<4>()?;
 
         // BM32
         if magic != [66, 77, 51, 50] {

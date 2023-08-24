@@ -47,17 +47,17 @@ pub struct LayerTable(LinkedHashMap<u32, LayerKind>);
 impl LayerTable {
     pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
         Ok(LayerTable(
-            (0..reader.read_as_num())
+            (0..reader.read_u32()?)
                 .map(|_| {
-                    let id: u32 = reader.read_as_num();
+                    let id = reader.read_u32()?;
 
-                    let kind = LayerKind::new(reader.read_as_num())?;
+                    let kind = LayerKind::new(reader.read_u16()?)?;
 
                     // Gets sent as windows message 0x80CA for some reason.
                     //
                     // 1       if LayerKind::Set.
                     // 157/158 if LayerKind::Regular.
-                    let _: u16 = reader.read_as_num();
+                    let _ = reader.read_u16()?;
 
                     Ok((id, kind))
                 })
@@ -311,26 +311,25 @@ impl Layer {
         reader: &mut FatEntryReader<'_>,
         decompress_layer_data: bool,
     ) -> Result<Self> {
-        let kind = reader.read_as_num::<u32>();
+        let kind = reader.read_u32()?;
         let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
         let kind = LayerKind::new(kind)?;
 
-        let id: u32 = reader.read_as_num();
+        let id = reader.read_u32()?;
         let bounds = LayerBounds {
-            x: reader.read_as_num(),
-            y: reader.read_as_num(),
-            width: reader.read_as_num(),
-            height: reader.read_as_num(),
+            x: reader.read_i32()?,
+            y: reader.read_i32()?,
+            width: reader.read_u32()?,
+            height: reader.read_u32()?,
         };
-        let _: u32 = reader.read_as_num();
-        let opacity: u8 = reader.read_as_num();
-        let visible = reader.read_as_num::<u8>() >= 1;
-        let preserve_opacity = reader.read_as_num::<u8>() >= 1;
-        let clipping = reader.read_as_num::<u8>() >= 1;
-        let _: u8 = reader.read_as_num();
+        let _ = reader.read_u32()?;
+        let opacity = reader.read_u8()?;
+        let visible = reader.read_bool()?;
+        let preserve_opacity = reader.read_bool()?;
+        let clipping = reader.read_bool()?;
+        let _ = reader.read_u8()?;
 
-        // SAFETY: c_uchar is an alias of u8.
-        let mut blending_mode: [c_uchar; 4] = unsafe { reader.read_as() };
+        let mut blending_mode = reader.read_array::<4>()?;
         blending_mode.reverse();
         let blending_mode = BlendingMode::new(blending_mode)?;
 
@@ -357,8 +356,7 @@ impl Layer {
             // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "name" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let name: [u8; 256] = unsafe { reader.read_as() };
+                    let name = reader.read_array::<256>()?;
                     let name = CStr::from_bytes_until_nul(&name)
                         .expect("contains null character")
                         .to_owned()
@@ -367,21 +365,20 @@ impl Layer {
 
                     let _ = layer.name.insert(name);
                 }
-                "pfid" => drop(layer.parent_set.insert(reader.read_as_num())),
-                "plid" => drop(layer.parent_layer.insert(reader.read_as_num())),
-                "fopn" => drop(layer.open.insert(reader.read_as_num::<u8>() >= 1)),
+                "pfid" => drop(layer.parent_set.insert(reader.read_u32()?)),
+                "plid" => drop(layer.parent_layer.insert(reader.read_u32()?)),
+                "fopn" => drop(layer.open.insert(reader.read_bool()?)),
                 "texn" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 64] = unsafe { reader.read_as() };
+                    let buf = reader.read_array::<64>()?;
                     let name = String::from_utf8_lossy(&buf);
                     let name = TextureName::new(name.trim_end_matches("\0"))?;
 
                     layer.texture.get_or_insert_with(Default::default).name = name;
                 }
-                // This values are always set, even if `texn` isn't.
                 "texp" => {
-                    let scale: u16 = reader.read_as_num();
-                    let opacity: u8 = reader.read_as_num();
+                    // This values are always set, even if `texn` isn't.
+                    let scale = reader.read_u16()?;
+                    let opacity = reader.read_u8()?;
 
                     if let Some(ref mut texture) = layer.texture {
                         texture.scale = scale;
@@ -389,9 +386,9 @@ impl Layer {
                     };
                 }
                 "peff" => {
-                    let enabled = reader.read_as_num::<u8>() >= 1;
-                    let opacity: u8 = reader.read_as_num();
-                    let width: u8 = reader.read_as_num();
+                    let enabled = reader.read_bool()?;
+                    let opacity = reader.read_u8()?;
+                    let width = reader.read_u8()?;
 
                     if enabled {
                         let _ = layer.effect.insert(Effect { opacity, width });
@@ -527,7 +524,7 @@ fn decompress_layer(
     {
         // Reads BGRA channels. Skip the next 4 ( unknown )
         for channel in 0..8 {
-            let size: usize = reader.read_as_num::<u16>().into();
+            let size: usize = reader.read_u16()?.into();
             reader.read_with_size(&mut rle_src, size)?;
 
             if channel < 4 {

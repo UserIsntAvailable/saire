@@ -1,11 +1,22 @@
 use super::FileSystemReader;
 use crate::block::{FatEntry, FatKind, VirtualPage, BLOCK_SIZE};
 use crate::Result;
-use num_traits::Num;
 use std::{
+    ffi,
     io::{BufWriter, Cursor, Read, Write},
-    mem::size_of,
 };
+
+// When generic_const_expr gonna hit stable? ...
+
+macro_rules! read_integer {
+    ($ident:ident, $ty:ty) => {
+        #[inline]
+        pub(crate) fn $ident(&mut self) -> Result<$ty> {
+            let array = self.read_array::<{ std::mem::size_of::<$ty>() }>()?;
+            Ok(<$ty>::from_le_bytes(array))
+        }
+    };
+}
 
 /// Reads the contents of an `FatKind::File`.
 pub(crate) struct FatEntryReader<'a> {
@@ -77,53 +88,34 @@ impl<'a> FatEntryReader<'a> {
         Ok(())
     }
 
-    /// Reads `size_of::<T>()` bytes, and returns the `Num`.
-    ///
-    /// This is basically a safe way to call `read_as()` if all what you need is a number.
-    pub(crate) fn read_as_num<T>(&mut self) -> T
-    where
-        T: Num + Copy,
-    {
-        // SAFETY: bytes can be safely cast to a primitive number ( even though is not recommended ).
-        unsafe { self.read_as() }
+    #[inline]
+    /// Reads `N` bytes, and returns [u8; N].
+    pub(crate) fn read_array<const N: usize>(&mut self) -> Result<[u8; N]> {
+        let mut array = [0; N];
+        self.read_exact(&mut array)?;
+        Ok(array)
     }
 
-    /// Reads `size_of::<T>()` bytes, and returns the value.
-    ///
-    /// # Panics
-    ///
-    /// - If there are not enough bytes on the `buffer` to create `size_of::<T>()`.
-    ///
-    /// # Safety
-    ///
-    /// The method is just casting the buffers bytes ( raw pointer ) to `T`; You need to abide all
-    /// the safeties of that operation.
-    pub(crate) unsafe fn read_as<T>(&mut self) -> T
-    where
-        T: Copy,
-    {
-        let mut buffer = vec![0; size_of::<T>()];
-        if let Err(_) = self.read_exact(&mut buffer) {
-            panic!("Can't convert to T; Not enough bytes on the reader.");
-        }
+    read_integer!(read_u8, u8);
+    read_integer!(read_u16, u16);
+    read_integer!(read_u32, u32);
+    read_integer!(read_i32, i32);
+    read_integer!(read_u64, u64);
 
-        unsafe { *(buffer.as_ptr() as *const T) }
+    pub(crate) fn read_bool(&mut self) -> Result<bool> {
+        Ok(self.read_u8()? >= 1)
     }
 
     /// TODO
-    pub(crate) unsafe fn read_next_stream_header(
-        &mut self,
-    ) -> Option<([std::ffi::c_uchar; 4], u32)> {
-        // SAFETY: c_uchar is an alias of u8.
-        let mut tag: [std::ffi::c_uchar; 4] = unsafe { self.read_as() };
+    pub(crate) unsafe fn read_next_stream_header(&mut self) -> Option<([ffi::c_uchar; 4], u32)> {
+        let mut tag = self.read_array::<4>().ok()?;
 
-        if tag == [0, 0, 0, 0] {
-            None
-        } else {
+        if tag != [0, 0, 0, 0] {
             tag.reverse();
-            let size: u32 = self.read_as_num();
-
-            Some((tag, size))
+            let size = self.read_u32().ok()?;
+            return Some((tag, size));
         }
+
+        None
     }
 }
