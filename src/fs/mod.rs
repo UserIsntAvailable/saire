@@ -139,7 +139,7 @@ impl FileSystemReader {
         (
             DataBlock::decrypt(self.read_block(index), entry.checksum())
                 .expect("sai file is corrupted"),
-            (entry.idx_of_next_block() != 0).then_some(entry.idx_of_next_block()),
+            (entry.next_block() != 0).then_some(entry.next_block()),
         )
     }
 }

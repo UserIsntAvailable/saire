@@ -1,9 +1,11 @@
-//! A `.sai` is encrypted in ECB blocks in which any randomly accessed block can be decrypted by
-//! also decrypting the appropriate `TableBlock` and accessing its 32-bit key found within.
+//! A `.sai` file is encrypted in ECB blocks in which any randomly accessed
+//! block can be decrypted by also decrypting the appropriate [`TableBlock`]
+//! and accessing its 32-bit key found within.
 //!
-//! An individual block in a `.sai` file is 4096 bytes of data. Every block index that is a multiple
-//! of 512(0, 512, 1024, etc) is a `TableBlock` containing meta-data about the block itself and the
-//! 511 blocks after it. Every other block that is not a `TableBlock` is a `DataBlock`.
+//! An individual block in a `.sai` file is **4096** bytes of data. Every block
+//! index that is a multiple of **512** (0, 512, 1024, etc) is a `TableBlock`
+//! containing meta-data about the block itself and the 511 blocks after it.
+//! Every other block that is not a `TableBlock` is a [`DataBlock`].
 
 use crate::utils;
 use core::{
@@ -32,6 +34,7 @@ macro_rules! block_partial_impl {
         }];
 
         impl $block_ty {
+            /// Converts this block back to a `VirtualPage`.
             #[inline]
             pub fn into_virtual_page(self) -> VirtualPage {
                 // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
@@ -48,7 +51,7 @@ macro_rules! block_partial_impl {
 
         impl Deref for $block_ty {
             type Target = $alias;
-            #[inline(always)]
+            #[inline]
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
@@ -61,9 +64,8 @@ block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
 
 /// A contiguous stream of bytes that may or not be encrypted.
 ///
-/// The main purpose of this type is to provide `move` semantics for an array,
-/// instead of their usual copy semantics.
-
+/// The main purpose of this type is to provide `move` semantics for an array of
+/// bytes, instead of their usual copy semantics.
 #[repr(C, /* PERF: align(4096) */)]
 #[derive(Clone, Debug)]
 pub struct VirtualPage([u8; BLOCK_SIZE]);
@@ -71,7 +73,7 @@ pub struct VirtualPage([u8; BLOCK_SIZE]);
 impl Deref for VirtualPage {
     type Target = [u8; BLOCK_SIZE];
 
-    #[inline(always)]
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -84,7 +86,7 @@ impl AsRef<[u8]> for VirtualPage {
 }
 
 impl From<[u8; BLOCK_SIZE]> for VirtualPage {
-    #[inline(always)]
+    #[inline]
     fn from(value: [u8; BLOCK_SIZE]) -> Self {
         Self(value)
     }
@@ -94,15 +96,19 @@ impl From<[u8; BLOCK_SIZE]> for VirtualPage {
 #[derive(Clone, Debug)]
 pub struct TableEntry {
     checksum: u32,
-    idx_of_next_block: u32,
+    next_block: u32,
 }
 
 impl TableEntry {
+    #[inline]
     pub fn checksum(&self) -> u32 {
         self.checksum
     }
-    pub fn idx_of_next_block(&self) -> u32 {
-        self.idx_of_next_block
+
+    #[inline]
+    // TODO: Return Option<u32>.
+    pub fn next_block(&self) -> u32 {
+        self.next_block
     }
 }
 
@@ -113,6 +119,15 @@ impl TableEntry {
 pub struct TableBlock(TableEntryArray);
 
 impl TableBlock {
+    /// Decrypts the contents of a `TableBlock`.
+    ///
+    /// The method only checks if the checksum of this block matches; the data
+    /// contained within this block might still be invalid.
+    ///
+    /// # Error
+    ///
+    /// Returns [`None`], if the generated checksum for this `TableBlock` doesn't
+    /// match the first checksum within this `TableBlock`.
     pub fn decrypt<B>(bytes: B, index: u32) -> Option<Self>
     where
         B: Into<VirtualPage>,
@@ -167,8 +182,9 @@ pub struct FatEntry {
     flags: u32,
     name: [ffi::c_uchar; 32],
     _pad1: u16,
-    // I'm not keeping FatKind directly here, because miri will complain that
-    // `0` is not a valid value for it.
+    // Not keeping FatKind directly here, because miri will complain that `0` is
+    // not a valid value for it (which is true, but it is up to the user to deal
+    // with that).
     kind: u8,
     _pad2: u8,
     next_block: u32,
@@ -180,15 +196,29 @@ pub struct FatEntry {
 // TODO: I need to think how to better report errors about invalid FatEntry. I
 // don't really have a good way to do it for now, so I just gonna pretend that
 // they are always valid.
+//
+// Moving forward both `name` and `kind` should return options to indicate
+// invalid values and `*_unchecked` methods should be added in case performance
+// over 100% correctness is needed (the library gonna use the safe versions).
 
 impl FatEntry {
-    /// If `0`, the entry is considered unused. Other values are unknown for the
-    /// moment.
+    /// The flags set for this `FatEntry`.
+    ///
+    /// I (neither Wunkolo) haven't really looked into what are the possible
+    /// values for this. As a rule of thumb, if `flags >> 24 == 0x80`, then this
+    /// `FatEntry` _might_ be valid; while this isn't a 100% guaranteed, it is
+    /// ok to call `FatEntry`'s methods, however you should still verify that
+    /// the returned values _do make sense_.
+    ///
+    /// If `0`, this entry is considered unused, so it would **only** have garbage
+    /// data.
+    #[inline]
     pub const fn flags(&self) -> u32 {
         self.flags
     }
 
-    // DOCS: First block
+    /// The name (ascii) of this `FatEntry`.
+    #[inline]
     pub fn name(&self) -> &str {
         let name = CStr::from_bytes_until_nul(&self.name)
             .expect("contains null character")
@@ -200,27 +230,32 @@ impl FatEntry {
     }
 
     /// Whether the `FatEntry` is a `FatKind::Folder` or `FatKind::File`.
-    pub fn kind(&self) -> FatKind {
+    #[inline]
+    pub const fn kind(&self) -> FatKind {
         match self.kind {
             0x10 => FatKind::Folder,
             0x80 => FatKind::File,
-            _ => unreachable!("invalid FatEntry"),
+            _ => unreachable!(),
         }
     }
 
     /// The next `DataBlock` index to look for.
     ///
-    /// Depending on the [`kind`] of this entry it will point where:
+    /// Depending on the [`kind`] of this entry it will point to the index
+    /// where:
     ///
-    /// 1. FatKind::Folder
+    /// # FatKind::Folder
     ///
-    /// DOCS:
+    /// the (next) folder is located. It would be non-zero if the folder has
+    /// more than 64 items.
     ///
-    /// 2. FatKind::File
+    /// # FatKind::File
     ///
-    /// the contents for this file are located.
+    /// the contents (bytes) of this file are.
     ///
     /// [`kind`]: FatEntry::kind
+    #[inline]
+    // TODO: Return Option<u32>.
     pub const fn next_block(&self) -> u32 {
         self.next_block
     }
@@ -229,6 +264,7 @@ impl FatEntry {
     /// bytes to read from [`next_block`] to get **all** the file contents.
     ///
     /// [`next_block`]: FatEntry::next_block
+    #[inline]
     pub const fn size(&self) -> u32 {
         self.size
     }
@@ -237,11 +273,13 @@ impl FatEntry {
     /// 1601` (UTC).
     ///
     /// See also: <https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime>
+    #[inline]
     pub const fn timestamp(&self) -> u64 {
         self.timestamp
     }
 
     /// Represents the number of seconds since `January 1, 1970` (epoch).
+    #[inline]
     pub const fn timestamp_unix(&self) -> u64 {
         utils::time::to_epoch(self.timestamp)
     }
@@ -252,6 +290,15 @@ impl FatEntry {
 pub struct DataBlock(FatEntryArray);
 
 impl DataBlock {
+    /// Decrypts the contents of a `DataBlock`.
+    ///
+    /// The method only checks if the checksum of this block matches; the data
+    /// contained within this block might still be invalid.
+    ///
+    /// # Error
+    ///
+    /// Returns [`None`], if the generated checksum for this `DataBlock` doesn't
+    /// match the provided checksum (cksum).
     pub fn decrypt<B>(bytes: B, cksum: u32) -> Option<Self>
     where
         B: Into<VirtualPage>,
@@ -288,33 +335,6 @@ impl DataBlock {
     }
 }
 
-/// Gets the `checksum` for the current `block`.
-///
-/// ## Implementation
-///
-/// ### TableBlock
-///
-/// The first checksum entry found within the `TableBlock` is the checksum of the
-/// table itself.
-///
-/// ### DataBlock
-///
-/// All 1024 integers (data) are exclusive-ored with an initial checksum of
-/// zero, which is rotated left 1 bit before the exclusive-or operation. Finally
-/// the lowest bit is set, making all checksums an odd number.
-///
-/// ## Block Corruption
-///
-/// ### TableBlock
-///
-/// DOCS:
-///
-/// ### DataBlock
-///
-/// A block-level corruption can be detected by a checksum mismatch. If the
-/// `DataBlock`'s generated checksum does not match the checksum found at the
-/// appropriate `TableEntry` within the `TableBlock`, then the `DataBlock` is
-/// considered corrupted.
 fn checksum(block: &[u32; 1024]) -> u32 {
     // PERF: no auto-vectorization
     block.iter().fold(0u32, |s, e| s.rotate_left(1) ^ e) | 1

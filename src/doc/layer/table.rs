@@ -1,6 +1,6 @@
 use super::{Layer, LayerKind};
 use crate::{fs::reader::FatEntryReader, Result};
-use indexmap::IndexMap;
+use indexmap::{map::IntoIter as MapIntoIter, IndexMap};
 use std::{
     iter::{self, FusedIterator},
     ops::Index,
@@ -114,7 +114,7 @@ impl LayerTable {
     /// # Panics
     ///
     /// - If any of the of the [`Layer::id`]'s is not available in the
-    /// [`LayerTable`].
+    /// [`LayerTable`] ("id is found").
     pub fn sort_layers(&self, layers: &mut Vec<Layer>) {
         // TODO(Unavailable): would sort_by_key/sort_unstable_by_key work here?
         layers.sort_by_cached_key(|e| self.map.get_full(&e.id).expect("id is found").0)
@@ -147,8 +147,9 @@ impl IntoIterator for LayerTable {
     }
 }
 
+#[derive(Debug)]
 pub struct IntoIter {
-    iter: iter::Enumerate<indexmap::map::IntoIter<u32, LayerRef>>,
+    iter: iter::Enumerate<MapIntoIter<u32, LayerRef>>,
 }
 
 impl IntoIter {

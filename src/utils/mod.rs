@@ -7,9 +7,11 @@ pub(crate) mod image {
 
     /// New type to create 8bpc images.
     pub struct PngImage {
+        // TODO(Unavailable): Own `ColorType` type.
         pub color: ColorType,
         pub width: u32,
         pub height: u32,
+        // TODO(Unavailable): stride
     }
 
     impl PngImage {
