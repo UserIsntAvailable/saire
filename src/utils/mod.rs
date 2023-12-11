@@ -165,8 +165,8 @@ pub(crate) mod tree {
                 };
             };
 
-            write!(f, "{}", prefix)?;
-            writeln!(f, "{}", parent_name)?;
+            write!(f, "{prefix}")?;
+            writeln!(f, "{parent_name}")?;
 
             if !parent_is_set {
                 return Ok(());

@@ -96,17 +96,18 @@ impl From<[u8; BLOCK_SIZE]> for VirtualPage {
 #[derive(Clone, Debug)]
 pub struct TableEntry {
     checksum: u32,
+    // TODO: Option<NonZeroU32>.
     next_block: u32,
 }
 
 impl TableEntry {
+    /// The checksum that is associated with this entry.
     #[inline]
     pub fn checksum(&self) -> u32 {
         self.checksum
     }
 
     #[inline]
-    // TODO: Return Option<u32>.
     pub fn next_block(&self) -> u32 {
         self.next_block
     }
@@ -132,8 +133,7 @@ impl TableBlock {
     where
         B: Into<VirtualPage>,
     {
-        #[inline(always)]
-        fn _inner(page: VirtualPage, index: u32) -> Option<TableBlock> {
+        fn inner(page: VirtualPage, index: u32) -> Option<TableBlock> {
             // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
             //
             // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
@@ -152,12 +152,12 @@ impl TableBlock {
                 prev
             });
 
-            let ecksum = data[0];
+            let expected_cksum = data[0];
             data[0] = 0;
-            let acksum = checksum(&data);
+            let actual_cksum = checksum(&data);
 
-            if acksum == ecksum {
-                data[0] = acksum;
+            if actual_cksum == expected_cksum {
+                data[0] = actual_cksum;
                 // SAFETY: See safety comment above.
                 Some(unsafe { mem::transmute(data) })
             } else {
@@ -165,7 +165,7 @@ impl TableBlock {
             }
         }
 
-        _inner(bytes.into(), index)
+        inner(bytes.into(), index)
     }
 }
 
@@ -187,6 +187,7 @@ pub struct FatEntry {
     // with that).
     kind: u8,
     _pad2: u8,
+    // TODO: Option<NonZeroU32>.
     next_block: u32,
     size: u32,
     timestamp: u64, // Windows FILETIME
@@ -255,7 +256,6 @@ impl FatEntry {
     ///
     /// [`kind`]: FatEntry::kind
     #[inline]
-    // TODO: Return Option<u32>.
     pub const fn next_block(&self) -> u32 {
         self.next_block
     }
@@ -303,8 +303,7 @@ impl DataBlock {
     where
         B: Into<VirtualPage>,
     {
-        #[inline(always)]
-        fn _inner(page: VirtualPage, cksum: u32) -> Option<DataBlock> {
+        fn inner(page: VirtualPage, cksum: u32) -> Option<DataBlock> {
             // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
             //
             // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
@@ -322,24 +321,24 @@ impl DataBlock {
                 value
             });
 
-            let acksum = checksum(&data);
-
             // SAFETY: See safety comment above.
             //
             // To circumvent the padding requirement, FatEntry has "manual" padded bytes (_pad*
             // fields), instead of letting repr(C) to do it automatically.
-            (acksum == cksum).then_some(unsafe { mem::transmute(data) })
+            (checksum(&data) == cksum).then_some(unsafe { mem::transmute(data) })
         }
 
-        _inner(bytes.into(), cksum)
+        inner(bytes.into(), cksum)
     }
 }
 
+#[inline]
 fn checksum(block: &[u32; 1024]) -> u32 {
     // PERF: no auto-vectorization
     block.iter().fold(0u32, |s, e| s.rotate_left(1) ^ e) | 1
 }
 
+#[inline]
 fn decrypt(value: u32) -> u32 {
     // PERF: no auto-vectorization
     (0..=24)
@@ -419,6 +418,6 @@ mod tests {
         assert_eq!(entry.name(), ".73851dcd1203b24d");
         assert_eq!(entry.kind(), FatKind::File);
         assert_eq!(entry.size(), 32);
-        assert_eq!(entry.timestamp_unix(), 1567531938);
+        assert_eq!(entry.timestamp_unix(), 1567531938); // 09/03/2019 @ 05:32pm
     }
 }

@@ -10,15 +10,15 @@ use std::{
 ///
 /// This table is used to quickly check for 4 specific properties of a layer:
 ///
-/// - index
-/// - id
-/// - kind
-/// - tile_height
+/// - `index`
+/// - `id`
+/// - `kind`
+/// - `tile_height`
 ///
-/// Both id and kind are the same as their countepart on [`Layer`]. tile_height
-/// is basically `layer.bounds.height / 32`. You can get these properties by
-/// calling [`get_full`] or [`get_by_index`] which will return a [`LayerRef`]
-/// struct.
+/// Both `id` and `kind` are the same as their countepart on [`Layer`].
+/// `tile_height` is basically `layer.bounds.height / 32`. You can get these
+/// properties by calling [`get_full`] or [`get_by_index`] which will return
+/// a [`LayerRef`] struct.
 ///
 /// [`get_full`]: LayerTable::get_full
 /// [`get_by_index`]: LayerTable::get_by_index
@@ -117,7 +117,7 @@ impl LayerTable {
     /// [`LayerTable`] ("id is found").
     pub fn sort_layers(&self, layers: &mut Vec<Layer>) {
         // TODO(Unavailable): would sort_by_key/sort_unstable_by_key work here?
-        layers.sort_by_cached_key(|e| self.map.get_full(&e.id).expect("id is found").0)
+        layers.sort_by_cached_key(|e| self.map.get_full(&e.id).expect("id is found").0);
     }
 }
 
@@ -129,7 +129,7 @@ impl Index<u32> for LayerTable {
     /// # Panics
     ///
     /// - If the id wasn't found.
-    #[inline(always)]
+    #[inline]
     fn index(&self, id: u32) -> &Self::Output {
         &self.map[&id]
     }
@@ -139,7 +139,7 @@ impl IntoIterator for LayerTable {
     type Item = (usize, LayerRef);
     type IntoIter = IntoIter;
 
-    #[inline(always)]
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         IntoIter {
             iter: self.map.into_iter().enumerate(),
@@ -163,26 +163,26 @@ impl IntoIter {
 impl Iterator for IntoIter {
     type Item = (usize, LayerRef);
 
-    #[inline(always)]
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(Self::to_index_layer_ref_pair)
     }
 }
 
 impl DoubleEndedIterator for IntoIter {
-    #[inline(always)]
+    #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         self.iter.next_back().map(Self::to_index_layer_ref_pair)
     }
 
-    #[inline(always)]
+    #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
         self.iter.nth_back(n).map(Self::to_index_layer_ref_pair)
     }
 }
 
 impl ExactSizeIterator for IntoIter {
-    #[inline(always)]
+    #[inline]
     fn len(&self) -> usize {
         self.iter.len()
     }

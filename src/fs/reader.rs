@@ -73,15 +73,13 @@ impl<'a> FatEntryReader<'a> {
 
                     break;
                 }
+            } else if let Some(cur_block) = self.cur_block {
+                let (data, next_block) = self.fs.read_data(cur_block as usize);
+                let virtual_page = data.into_virtual_page();
+                self.cursor = Some(Cursor::new(virtual_page));
+                self.cur_block = next_block;
             } else {
-                if let Some(cur_block) = self.cur_block {
-                    let (data, next_block) = self.fs.read_data(cur_block as usize);
-                    let virtual_page = data.into_virtual_page();
-                    self.cursor = Some(Cursor::new(virtual_page));
-                    self.cur_block = next_block;
-                } else {
-                    panic!("End of file.");
-                }
+                panic!("End of file.");
             }
         }
 

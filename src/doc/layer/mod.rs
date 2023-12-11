@@ -29,18 +29,18 @@ pub enum LayerKind {
 
 impl LayerKind {
     fn new(value: u16) -> Result<Self> {
-        use LayerKind::*;
+        use LayerKind as K;
 
-        match value {
-            0 => Ok(RootLayer),
-            3 => Ok(Regular),
-            4 => Ok(_Unknown4),
-            5 => Ok(Linework),
-            6 => Ok(Mask),
-            7 => Ok(_Unknown7),
-            8 => Ok(Set),
-            _ => Err(FormatError::Invalid.into()),
-        }
+        Ok(match value {
+            0 => K::RootLayer,
+            3 => K::Regular,
+            4 => K::_Unknown4,
+            5 => K::Linework,
+            6 => K::Mask,
+            7 => K::_Unknown7,
+            8 => K::Set,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -60,21 +60,21 @@ pub enum BlendingMode {
 
 impl BlendingMode {
     fn new(bytes: [c_uchar; 4]) -> Result<Self> {
-        use BlendingMode::*;
+        use BlendingMode as B;
 
         // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
-        match unsafe { std::str::from_utf8_unchecked(&bytes) } {
-            "pass" => Ok(PassThrough),
-            "norm" => Ok(Normal),
-            "mul " => Ok(Multiply),
-            "scrn" => Ok(Screen),
-            "over" => Ok(Overlay),
-            "add " => Ok(Luminosity),
-            "sub " => Ok(Shade),
-            "adsb" => Ok(LumiShade),
-            "cbin" => Ok(Binary),
-            _ => Err(FormatError::Invalid.into()),
-        }
+        Ok(match unsafe { std::str::from_utf8_unchecked(&bytes) } {
+            "pass" => B::PassThrough,
+            "norm" => B::Normal,
+            "mul " => B::Multiply,
+            "scrn" => B::Screen,
+            "over" => B::Overlay,
+            "add " => B::Luminosity,
+            "sub " => B::Shade,
+            "adsb" => B::LumiShade,
+            "cbin" => B::Binary,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -259,7 +259,7 @@ impl Layer {
                 "texn" => {
                     let buf = reader.read_array::<64>()?;
                     let name = String::from_utf8_lossy(&buf);
-                    let name = TextureName::new(name.trim_end_matches("\0"))?;
+                    let name = TextureName::new(name.trim_end_matches('\0'))?;
 
                     layer.texture.get_or_insert_with(Default::default).name = name;
                 }
@@ -315,6 +315,10 @@ impl Layer {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// - If it wasn't able to save the image.
     ///
     /// # Panics
     ///

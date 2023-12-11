@@ -43,28 +43,24 @@ pub enum FormatError {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use Error::*;
+        use Error as E;
 
-        let msg = match self {
-            IoError(io) => io.to_string(),
-            Format(format) => format.to_string(),
-            Unknown() => "Something went wrong while reading the file.".to_string(),
-        };
-
-        write!(f, "{msg}")
+        match self {
+            E::IoError(io) => write!(f, "{io}"),
+            E::Format(format) => write!(f, "{format}"),
+            E::Unknown() => write!(f, "Something went wrong while reading the file."),
+        }
     }
 }
 
 impl Display for FormatError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use FormatError::*;
+        use FormatError as E;
 
-        let msg = match self {
-            MissingEntry(entry) => format!("'{}' entry is missing.", entry),
-            Invalid => "Invalid/Corrupted sai file.".to_string(),
-        };
-
-        write!(f, "{msg}")
+        match self {
+            E::MissingEntry(entry) => write!(f, "'{entry}' entry is missing."),
+            E::Invalid => write!(f, "Invalid/Corrupted sai file."),
+        }
     }
 }
 
@@ -168,7 +164,7 @@ impl SaiDocument {
                     .iter()
                     .filter(|i| i.flags() != 0)
                     .map(|i| {
-                        let mut reader = FatEntryReader::new(&self.fs, &i);
+                        let mut reader = FatEntryReader::new(&self.fs, i);
                         Layer::new(&mut reader, decompress_layers)
                     })
                     .collect::<Vec<_>>()

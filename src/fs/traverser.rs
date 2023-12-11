@@ -35,8 +35,8 @@ impl FsTraverser for FileSystemReader {
     }
 }
 
-fn traverse_data<'a>(
-    fs: &'a FileSystemReader,
+fn traverse_data(
+    fs: &FileSystemReader,
     index: usize,
     on_traverse: &impl Fn(TraverseEvent, &FatEntry) -> bool,
 ) -> Option<FatEntry> {
@@ -53,18 +53,18 @@ fn traverse_data<'a>(
 
             match entry.kind() {
                 FatKind::File => {
-                    if on_traverse(TraverseEvent::File, &entry) {
+                    if on_traverse(TraverseEvent::File, entry) {
                         return Some(entry.to_owned());
                     }
                 }
                 FatKind::Folder => {
-                    if on_traverse(TraverseEvent::FolderStart, &entry) {
+                    if on_traverse(TraverseEvent::FolderStart, entry) {
                         return Some(entry.to_owned());
                     };
 
-                    traverse_data(&fs, entry.next_block() as usize, on_traverse);
+                    traverse_data(fs, entry.next_block() as usize, on_traverse);
 
-                    if on_traverse(TraverseEvent::FolderEnd, &entry) {
+                    if on_traverse(TraverseEvent::FolderEnd, entry) {
                         return Some(entry.to_owned());
                     };
                 }

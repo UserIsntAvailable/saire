@@ -11,13 +11,13 @@ pub enum SizeUnit {
 
 impl SizeUnit {
     fn new(value: u16) -> Result<Self> {
-        use SizeUnit::*;
+        use SizeUnit as S;
 
         Ok(match value {
-            0 => Pixels,
-            1 => Inch,
-            2 => Centimeters,
-            3 => Milimeters,
+            0 => S::Pixels,
+            1 => S::Inch,
+            2 => S::Centimeters,
+            3 => S::Milimeters,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
@@ -34,16 +34,15 @@ pub enum ResolutionUnit {
 
 impl ResolutionUnit {
     fn new(value: u16) -> Result<Self> {
-        use ResolutionUnit::*;
+        use ResolutionUnit as U;
 
         Ok(match value {
-            0 => PixelsInch,
-            1 => PixelsCm,
+            0 => U::PixelsInch,
+            1 => U::PixelsCm,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
 }
-
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Canvas {

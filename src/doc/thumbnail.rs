@@ -17,8 +17,7 @@ impl Thumbnail {
 
         let magic = reader.read_array::<4>()?;
 
-        // BM32
-        if magic != [66, 77, 51, 50] {
+        if &magic != b"BM32" {
             return Err(FormatError::Invalid.into());
         }
 
@@ -39,6 +38,10 @@ impl Thumbnail {
 
     #[cfg(feature = "png")]
     /// Gets a png image from the underlying `Thumbnail` pixels.
+    ///
+    /// # Errors
+    ///
+    /// - If it wasn't able to save the image.
     pub fn to_png<P>(&self, path: P) -> Result<()>
     where
         P: AsRef<std::path::Path>,

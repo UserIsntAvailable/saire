@@ -1,7 +1,11 @@
 #![allow(dead_code, unused_variables)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
-#![allow(clippy::unreadable_literal)]
+#![allow(
+    clippy::cast_lossless,
+    clippy::must_use_candidate,
+    clippy::unreadable_literal
+)]
 
 pub mod doc;
 pub mod utils;
