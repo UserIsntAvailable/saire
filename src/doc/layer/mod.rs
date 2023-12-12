@@ -1,11 +1,11 @@
 mod table;
 
 use super::{FatEntryReader, FormatError, Result};
+use crate::block::BLOCK_SIZE;
 use itertools::Itertools;
 use std::{
     cmp::Ordering,
     ffi::{c_uchar, CStr},
-    mem,
 };
 
 pub use table::{LayerRef, LayerTable};
@@ -287,41 +287,10 @@ impl Layer {
         }
 
         let dimensions = (bounds.width as usize, bounds.height as usize);
-        layer.data = match kind {
-            LayerKind::Regular if decompress_layer_data => {
-                Some(decompress_raster::<{ mem::size_of::<u32>() }>(
-                    reader,
-                    dimensions,
-                    #[inline]
-                    |channel, reader, buffer| {
-                        if channel == 3 {
-                            for channel in 0..4 {
-                                let size = reader.read_u16()? as usize;
-                                reader.read_with_size(buffer, size)?;
-                            }
-                        }
-
-                        Ok(())
-                    },
-                    #[inline]
-                    |dst, src| {
-                        // Swap BGRA -> RGBA
-                        dst[0] = src[2];
-                        dst[1] = src[1];
-                        dst[2] = src[0];
-                        dst[3] = src[3];
-                    },
-                )?)
-            }
-            LayerKind::Mask if decompress_layer_data => {
-                Some(decompress_raster::<{ mem::size_of::<u16>() }>(
-                    reader,
-                    dimensions,
-                    |_, _, _| Ok(()),
-                    |dst, src| dst.copy_from_slice(src),
-                )?)
-            }
-            _ => None,
+        if decompress_layer_data && kind == LayerKind::Regular {
+            let dimensions = (bounds.width as usize, bounds.height as usize);
+            let data = decompress_layer(dimensions, reader)?;
+            let _ = layer.data.insert(data);
         };
 
         Ok(layer)
@@ -394,19 +363,17 @@ impl Layer {
         panic!("For now, saire can only decompress LayerKind::Regular data.");
     }
 }
-
-const TILE_SIZE: usize = 32;
-
-fn rle_decompress_stride<const BPP: usize>(dst: &mut [u8], src: &[u8]) {
-    debug_assert!(BPP == std::mem::size_of::<u16>() || BPP == std::mem::size_of::<u32>());
+fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
+    const STRIDE: usize = std::mem::size_of::<u32>();
+    const STRIDE_COUNT: usize = BLOCK_SIZE / STRIDE;
 
     let mut src = src.iter();
-    let mut dst = dst.iter_mut().step_by(BPP);
+    let mut dst = dst.iter_mut().step_by(STRIDE);
     let mut src = || src.next().expect("src has items");
     let mut dst = || dst.next().expect("dst has items");
 
     let mut wrote = 0;
-    while wrote < TILE_SIZE * TILE_SIZE {
+    while wrote < STRIDE_COUNT {
         let length = *src() as usize;
 
         wrote += match length.cmp(&128) {
@@ -428,31 +395,23 @@ fn rle_decompress_stride<const BPP: usize>(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-// (channel, reader, buffer)
-type DecompressedChannelCb = fn(usize, &mut FatEntryReader<'_>, &mut [u8; 0x800]) -> Result<()>;
-
-// (dst, src)
-//
-// NIGHTLY: When `as_chunks/array_chunks` hits stable change parameters to [u8; BPP].
-type PixelWriteCb = fn(&mut [u8], &[u8]);
-
-fn decompress_raster<const BPP: usize>(
-    reader: &mut FatEntryReader<'_>,
+fn decompress_layer(
     (width, height): (usize, usize),
-    channel_decompressed: DecompressedChannelCb,
-    pixel_write: PixelWriteCb,
+    reader: &mut FatEntryReader<'_>,
 ) -> Result<Vec<u8>> {
-    let tile_map_height = (height - 1) / TILE_SIZE;
-    let tile_map_width = (width - 1) / TILE_SIZE;
+    const TILE_SIZE: usize = 32;
+
+    let tile_map_height = height / TILE_SIZE;
+    let tile_map_width = width / TILE_SIZE;
 
     let mut tile_map = vec![0; tile_map_height * tile_map_width];
     reader.read_exact(&mut tile_map)?;
-    let tile_map = tile_map; // Prevents `tile_map` to be mutable.
 
-    let mut pixels = vec![0; width * height * BPP];
-    // NIGHTLY: const_generics_exprs
-    let mut rle_dst = vec![0; TILE_SIZE * TILE_SIZE * BPP];
-    let mut rle_src = [0; 0x800];
+    // Prevents `tile_map` to be mutable.
+    let tile_map = tile_map;
+    let mut pixels = vec![0; width * height * 4];
+    let mut rle_dst = [0; BLOCK_SIZE];
+    let mut rle_src = [0; BLOCK_SIZE / 2];
 
     let pos2idx = |y, x, stride| y * stride + x;
 
@@ -460,27 +419,33 @@ fn decompress_raster<const BPP: usize>(
         .cartesian_product(0..tile_map_width)
         .filter(|(y, x)| tile_map[pos2idx(*y, *x, tile_map_width)] != 0)
     {
-        for channel in 0..BPP {
-            let size = reader.read_u16()? as usize;
+        // Reads BGRA channels. Skip the next 4 ( unknown )
+        for channel in 0..8 {
+            let size: usize = reader.read_u16()?.into();
             reader.read_with_size(&mut rle_src, size)?;
-            rle_decompress_stride::<BPP>(&mut rle_dst[channel..], &rle_src);
 
-            channel_decompressed(channel, reader, &mut rle_src)?;
+            if channel < 4 {
+                rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
+            }
         }
 
         // Leaves pre-multiplied
-        rle_dst.chunks_exact(TILE_SIZE * BPP).fold(
+        rle_dst.chunks_exact(TILE_SIZE * 4).fold(
             // Offset of first element on the 32x32 tile within the final image.
             pos2idx(y * width, x * TILE_SIZE, TILE_SIZE),
             |offset, src| {
-                for (dst, src) in pixels[offset * BPP..]
-                    .chunks_exact_mut(BPP)
-                    .zip(src.chunks_exact(BPP))
+                // Swaps BGRA -> RGBA
+                for (dst, src) in pixels[offset * 4..]
+                    .chunks_exact_mut(4)
+                    .zip(src.chunks_exact(4))
                 {
-                    pixel_write(dst, src);
+                    dst[0] = src[2];
+                    dst[1] = src[1];
+                    dst[2] = src[0];
+                    dst[3] = src[3];
                 }
 
-                // Skips `width` bytes to get the next row of the 32x32 tile map.
+                // Skips `width` bytes to get the next row of the 32x32 tile.
                 offset + width
             },
         );
