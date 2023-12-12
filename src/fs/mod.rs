@@ -1,9 +1,7 @@
 pub(crate) mod reader;
 pub(crate) mod traverser;
 
-use crate::block::{
-    data::DataBlock, table::TableBlock, BlockBuffer, BLOCKS_PER_PAGE, SAI_BLOCK_SIZE,
-};
+use crate::block::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTION, BLOCK_SIZE};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -66,10 +64,19 @@ impl FileSystemReader {
     ///
     /// - If at any moment the `FileSystem` encounters an invalid `SaiBlock`.
     pub(crate) fn new_unchecked(mut reader: impl ReadSeek + 'static) -> Self {
+        // copied from stream_len() from std nightly.
+        let stream_len = {
+            let old_pos = reader.stream_position().unwrap();
+            let len = reader.seek(std::io::SeekFrom::End(0)).unwrap();
+            reader.seek(std::io::SeekFrom::Start(old_pos)).unwrap();
+
+            len
+        };
+
         assert_eq!(
-            reader.stream_len().unwrap() & 0x1FF,
+            stream_len & 0x1FF,
             0,
-            "the reader's bytes are not be block aligned.",
+            "the reader's bytes are not be block aligned."
         );
 
         Self {
@@ -77,27 +84,24 @@ impl FileSystemReader {
             //
             // Caching a whole page could be OK-ish, but 2.09 MB seems a lot. I guess I could give
             // the option to users to set what amount of memory this.
-            bufreader: RefCell::new(BufReader::with_capacity(
-                SAI_BLOCK_SIZE * 2,
-                Box::new(reader),
-            )),
+            bufreader: RefCell::new(BufReader::with_capacity(BLOCK_SIZE * 2, Box::new(reader))),
             table: HashMap::new().into(),
         }
     }
 
     // TODO: Remove unwraps
     /// Gets the `SaiBlock`'s bytes at the specified `index`.
-    fn read_block(&self, index: usize) -> BlockBuffer {
+    fn read_block(&self, index: usize) -> VirtualPage {
         let mut reader = self.bufreader.borrow_mut();
 
         let position = reader.stream_position().unwrap();
-        let offset = (index * SAI_BLOCK_SIZE) as i64 - position as i64;
+        let offset = (index * BLOCK_SIZE) as i64 - position as i64;
         reader.seek_relative(offset).unwrap();
 
-        let mut block = [0; SAI_BLOCK_SIZE];
+        let mut block = [0; BLOCK_SIZE];
         reader.read(&mut block).unwrap();
 
-        block
+        block.into()
     }
 
     /// Gets the `DataBlock` at the specified `index`.
@@ -106,24 +110,22 @@ impl FileSystemReader {
     ///
     /// - If the sai file is corrupted ( checksums doesn't match ).
     pub(crate) fn read_data(&self, index: usize) -> (DataBlock, Option<u32>) {
-        debug_assert!(index % BLOCKS_PER_PAGE != 0);
+        debug_assert!(index % BLOCKS_PER_SECTION != 0);
 
         let table_index = index & !0x1FF;
-        let entries = self
-            .table
-            .borrow_mut()
-            .entry(table_index)
-            .or_insert_with(|| {
-                TableBlock::new(&self.read_block(table_index), table_index as u32)
-                    .expect("sai file is corrupted")
-            })
-            .entries;
 
-        let entry = entries[index % BLOCKS_PER_PAGE];
+        let mut table = self.table.borrow_mut();
+        let table = table.entry(table_index).or_insert_with(|| {
+            TableBlock::decrypt(self.read_block(table_index), table_index as u32)
+                .expect("sai file is corrupted")
+        });
+
+        let entry = &table[index % BLOCKS_PER_SECTION];
 
         (
-            DataBlock::new(&self.read_block(index), entry.checksum).expect("sai file is corrupted"),
-            (entry.next_block != 0).then_some(entry.next_block),
+            DataBlock::decrypt(self.read_block(index), entry.checksum())
+                .expect("sai file is corrupted"),
+            (entry.next_block() != 0).then_some(entry.next_block()),
         )
     }
 }

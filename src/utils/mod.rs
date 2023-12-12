@@ -7,9 +7,11 @@ pub mod image {
 
     /// New type to create 8bpc images.
     pub struct PngImage {
+        // TODO(Unavailable): Own `ColorType` type.
         pub color: ColorType,
         pub width: u32,
         pub height: u32,
+        // TODO(Unavailable): stride
     }
 
     impl PngImage {
@@ -45,19 +47,21 @@ pub(crate) mod path {
     use std::path::{Path, PathBuf};
 
     /// Gets a file from `resources` folder.
-    pub(crate) fn read_res(res: impl AsRef<Path>) -> String {
+    pub(crate) fn read_res(res: impl AsRef<Path>) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join(".resources")
             .join(res)
-            .to_str()
-            .unwrap()
-            .into()
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    pub(crate) const SAMPLE: &[u8] = include_bytes!("../../.resources/sample.sai");
 }
 
 pub(crate) mod time {
     /// Converts a `Windows FILETIME` timestamp to an `epoch` timestamp.
-    pub(crate) fn to_epoch(w_timestamp: u64) -> u64 {
+    pub(crate) const fn to_epoch(w_timestamp: u64) -> u64 {
         w_timestamp / 10000000 - 11644473600
     }
 }
@@ -161,8 +165,8 @@ pub(crate) mod tree {
                 };
             };
 
-            write!(f, "{}", prefix)?;
-            writeln!(f, "{}", parent_name)?;
+            write!(f, "{prefix}")?;
+            writeln!(f, "{parent_name}")?;
 
             if !parent_is_set {
                 return Ok(());
@@ -174,8 +178,13 @@ pub(crate) mod tree {
                     child_prefix.to_owned() + "│  ",
                 );
 
-                #[rustfmt::skip]
-                for ChildInfo { name, id, is_set, is_visible, } in children {
+                for ChildInfo {
+                    name,
+                    id,
+                    is_set,
+                    is_visible,
+                } in children
+                {
                     self.collect(
                         f,
                         p,

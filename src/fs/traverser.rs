@@ -3,7 +3,7 @@
 // the file format, I will work it latter on.
 
 use super::FileSystemReader;
-use crate::block::data::{Inode, InodeKind};
+use crate::block::{FatEntry, FatKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraverseEvent {
@@ -14,52 +14,58 @@ pub(crate) enum TraverseEvent {
 
 /// Traverses a SAI file system structure.
 pub(crate) trait FsTraverser {
-    /// Traverses all `Inode`s from `root` inside this `Traverser`
+    /// Traverses all `FatEntry`s from `root` inside this `Traverser`
     ///
     /// # Usage
     ///
     /// If `on_traverse` returns `true`, then the return value will be `Some` of the last traversed
-    /// inode, otherwise `None`.
-    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) -> Option<Inode>;
+    /// fat entry, otherwise `None`.
+    fn traverse_root(
+        &self,
+        on_traverse: impl Fn(TraverseEvent, &FatEntry) -> bool,
+    ) -> Option<FatEntry>;
 }
 
 impl FsTraverser for FileSystemReader {
-    fn traverse_root(&self, on_traverse: impl Fn(TraverseEvent, &Inode) -> bool) -> Option<Inode> {
+    fn traverse_root(
+        &self,
+        on_traverse: impl Fn(TraverseEvent, &FatEntry) -> bool,
+    ) -> Option<FatEntry> {
         traverse_data(self, 2, &on_traverse)
     }
 }
 
-fn traverse_data<'a>(
-    fs: &'a FileSystemReader,
+fn traverse_data(
+    fs: &FileSystemReader,
     index: usize,
-    on_traverse: &impl Fn(TraverseEvent, &Inode) -> bool,
-) -> Option<Inode> {
-    // FIX: Use `scan pattern`.
+    on_traverse: &impl Fn(TraverseEvent, &FatEntry) -> bool,
+) -> Option<FatEntry> {
+    // TODO: Use `scan pattern`.
     let mut next_index = index;
     loop {
         let (data, next_block) = fs.read_data(next_index);
         next_index = next_block.map_or(0, |n| n as usize);
 
-        for inode in data.as_inodes() {
-            if inode.flags() == 0 {
+        for entry in &data[..] {
+            if entry.flags() == 0 {
                 break;
             }
 
-            match inode.kind() {
-                InodeKind::File => {
-                    if on_traverse(TraverseEvent::File, &inode) {
-                        return Some(inode.to_owned());
+            match entry.kind() {
+                FatKind::File => {
+                    if on_traverse(TraverseEvent::File, entry) {
+                        return Some(entry.to_owned());
                     }
                 }
-                InodeKind::Folder => {
-                    if on_traverse(TraverseEvent::FolderStart, &inode) {
-                        return Some(inode.to_owned());
+                FatKind::Folder => {
+                    if on_traverse(TraverseEvent::FolderStart, entry) {
+                        return Some(entry.to_owned());
                     };
 
-                    traverse_data(&fs, inode.next_block() as usize, on_traverse);
+                    traverse_data(fs, entry.next_block() as usize, on_traverse);
 
-                    if on_traverse(TraverseEvent::FolderEnd, &inode) {
-                        return Some(inode.to_owned());
+                    if on_traverse(TraverseEvent::FolderEnd, entry) {
+                        return Some(entry.to_owned());
                     };
                 }
             }
@@ -77,21 +83,15 @@ fn traverse_data<'a>(
 mod tests {
     use super::*;
     use crate::{
-        block::data::{Inode, InodeKind},
-        utils::path::read_res,
+        block::{FatEntry, FatKind},
+        utils::tests::SAMPLE as BYTES,
     };
     use eyre::Result;
-    use lazy_static::lazy_static;
     use std::{
         cell::{Cell, RefCell},
         fmt::Display,
-        fs::read,
     };
     use tabular::{Row, Table};
-
-    lazy_static! {
-        static ref BYTES: Vec<u8> = read(read_res("sample.sai")).unwrap();
-    }
 
     #[test]
     // Cool tree view of the underlying sai file system. Keeping it here to make sure the file is being read correctly :).
@@ -99,39 +99,40 @@ mod tests {
         #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
 
         impl TreeVisitor {
-            fn visit(&self, action: TraverseEvent, inode: &Inode) -> bool {
+            fn visit(&self, action: TraverseEvent, entry: &FatEntry) -> bool {
                 match action {
-                    TraverseEvent::File => self.add_row(inode),
+                    TraverseEvent::File => self.add_row(entry),
                     TraverseEvent::FolderStart => {
-                        self.add_row(inode);
-                        self.depth.update(|v| v + 1);
+                        self.add_row(entry);
+                        self.depth.set(self.depth.get() + 1);
                     }
                     TraverseEvent::FolderEnd => {
-                        self.depth.update(|v| v - 1);
+                        self.depth.set(self.depth.get() - 1);
                     }
                 };
 
                 false
             }
 
-            fn add_row(&self, inode: &Inode) {
-                let date = chrono::NaiveDateTime::from_timestamp_opt(inode.timestamp() as i64, 0)
-                    .expect("timestamp is not out-of-bounds.")
-                    .format("%Y-%m-%d");
+            fn add_row(&self, entry: &FatEntry) {
+                let date =
+                    chrono::NaiveDateTime::from_timestamp_opt(entry.timestamp_unix() as i64, 0)
+                        .expect("timestamp is not out-of-bounds.")
+                        .format("%Y-%m-%d");
 
-                self.table.borrow_mut().add_row(match inode.kind() {
-                    InodeKind::Folder => Row::new()
+                self.table.borrow_mut().add_row(match entry.kind() {
+                    FatKind::Folder => Row::new()
                         .with_cell("")
                         .with_cell("d")
                         .with_cell(date)
-                        .with_cell(format!("{}/", inode.name())),
-                    InodeKind::File => Row::new()
-                        .with_cell(inode.size())
+                        .with_cell(format!("{}/", entry.name())),
+                    FatKind::File => Row::new()
+                        .with_cell(entry.size())
                         .with_cell("f")
                         .with_cell(date)
                         .with_cell(format!(
                             "{empty: >width$}{}",
-                            inode.name(),
+                            entry.name(),
                             empty = "",
                             width = self.depth.get()
                         )),
@@ -155,7 +156,7 @@ mod tests {
         }
 
         let visitor = TreeVisitor::default();
-        FileSystemReader::from(BYTES.as_slice()).traverse_root(|a, i| visitor.visit(a, i));
+        FileSystemReader::from(BYTES).traverse_root(|a, i| visitor.visit(a, i));
 
         assert_eq!(
             format!("\n{visitor}"),
@@ -173,11 +174,10 @@ mod tests {
     }
 
     #[test]
-    fn traverser_returns_stopped_inode() {
+    fn traverser_returns_stopped_entry() {
         const EXPECTED: &str = "canvas";
 
-        let actual =
-            FileSystemReader::from(BYTES.as_slice()).traverse_root(|_, i| i.name() == EXPECTED);
+        let actual = FileSystemReader::from(BYTES).traverse_root(|_, i| i.name() == EXPECTED);
 
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().name(), EXPECTED);

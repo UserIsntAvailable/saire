@@ -1,4 +1,4 @@
-use super::{utils, InodeReader, Result};
+use super::{utils, FatEntryReader, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Author {
@@ -17,28 +17,28 @@ pub struct Author {
 }
 
 impl Author {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
-        let bitflag: u32 = reader.read_as_num();
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+        let bitflag = reader.read_u32()?;
 
         if bitflag >> 24 != 0x80 {
             return Err(crate::FormatError::Invalid.into());
         }
 
-        let _: u32 = reader.read_as_num();
+        let _ = reader.read_u32()?;
 
-        let mut read_date = || -> u64 {
-            let date: u64 = reader.read_as_num();
+        let mut read_date = || -> Result<u64> {
+            let date = reader.read_u64()?;
             // For some reason, here it uses `seconds` since `January 1, 1601`; gotta love the
             // consistency.
             let filetime = date * 10000000;
 
-            utils::time::to_epoch(filetime)
+            Ok(utils::time::to_epoch(filetime))
         };
 
         Ok(Self {
-            date_created: read_date(),
-            date_modified: read_date(),
-            machine_hash: format!("{:x}", reader.read_as_num::<u64>()),
+            date_created: read_date()?,
+            date_modified: read_date()?,
+            machine_hash: format!("{:x}", reader.read_u64()?),
         })
     }
 }

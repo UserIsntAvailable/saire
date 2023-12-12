@@ -44,7 +44,7 @@ fn main() -> Result<()> {
     let canvas = doc.canvas()?;
     let laytbl = doc.laytbl()?;
     let mut layers = doc.layers()?;
-    laytbl.order(&mut layers);
+    laytbl.sort_layers(&mut layers);
 
     let width = canvas.width as usize;
     let height = canvas.height as usize;

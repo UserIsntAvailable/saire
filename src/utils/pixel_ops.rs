@@ -19,9 +19,9 @@ pub fn premultiplied_to_straight(pixels: &[u8]) -> Vec<u8> {
 
                 cur_channel = channel_float as i32;
                 cur_channel &= 255;
-                cur_channel = cur_channel << (c * 8);
+                cur_channel <<= c * 8;
 
-                quad_pixel = !(0xFF << (c * 8)) & quad_pixel;
+                quad_pixel &= !(0xFF << (c * 8));
                 quad_pixel |= cur_channel;
             }
 

@@ -1,125 +1,14 @@
-use super::{FormatError, InodeReader, Result};
+mod table;
+
+use super::{FatEntryReader, FormatError, Result};
 use itertools::Itertools;
-use linked_hash_map::LinkedHashMap;
 use std::{
     cmp::Ordering,
-    collections::HashMap,
     ffi::{c_uchar, CStr},
     mem,
-    ops::Index,
 };
 
-/// Holds information about the [`Layer`]s that make up a SAI image.
-///
-/// This is used to keep track of 3 properties of a [`Layer`]:
-///
-/// - id
-/// - kind
-/// - order/rank
-///
-/// Where order/rank refers to the index from `lowest` to `highest` where the layer is placed in the
-/// image; i.e: order 0 would mean that the layer is the `first` layer on the image.
-///
-/// To get the [`LayerKind`], you can use [`index`]. To get the order of a [`Layer`], you can use
-/// [`order_of`].
-///
-/// [`index`]: LayerTable::index
-/// [`order_of`]: LayerTable::order_of
-///
-/// # Examples
-///
-/// ```no_run
-/// use saire::{SaiDocument, Result};
-///
-/// fn main() -> Result<()> {
-///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
-///     // subtbl works the same in the same way.
-///     let laytbl = doc.laytbl()?;
-///     
-///     // id = 2 is `usually` the first layer.
-///     assert_eq!(laytbl.order_of(2), Some(0));
-///
-///     Ok(())
-/// }
-/// ```
-pub struct LayerTable(LinkedHashMap<u32, LayerKind>);
-
-impl LayerTable {
-    pub(super) fn new(reader: &mut InodeReader<'_>) -> Result<Self> {
-        Ok(LayerTable(
-            (0..reader.read_as_num())
-                .map(|_| {
-                    let id: u32 = reader.read_as_num();
-
-                    let kind = LayerKind::new(reader.read_as_num())?;
-
-                    // Gets sent as windows message 0x80CA for some reason.
-                    //
-                    // 1       if LayerKind::Set.
-                    // 157/158 if LayerKind::Regular.
-                    let _: u16 = reader.read_as_num();
-
-                    Ok((id, kind))
-                })
-                .collect::<Result<_>>()?,
-        ))
-    }
-
-    /// Gets the order of the specified layer `id`.
-    pub fn order_of(&self, id: u32) -> Option<usize> {
-        self.0.keys().position(|v| *v == id)
-    }
-
-    /// Modifies a <code>[Vec]<[Layer]></code> to be ordered from `lowest` to `highest`.
-    ///
-    /// If you ever wanna return to the original order you can sort by [`Layer::id`].
-    ///
-    /// # Panics
-    ///
-    /// - If any of the of the [`Layer::id`]'s is not available in the [`LayerTable`].
-    pub fn order(&self, layers: &mut Vec<Layer>) {
-        let keys = self
-            .0
-            .keys()
-            .enumerate()
-            .map(|(i, k)| (k, i))
-            .collect::<HashMap<_, _>>();
-
-        layers.sort_by_cached_key(|e| keys[&e.id])
-    }
-}
-
-impl Index<u32> for LayerTable {
-    type Output = LayerKind;
-
-    /// Gets the [`LayerKind`] of the specified layer `id`.
-    ///
-    /// # Panics
-    ///
-    /// - If the id wasn't found.
-    fn index(&self, id: u32) -> &Self::Output {
-        &self.0[&id]
-    }
-}
-
-pub struct IntoIter(linked_hash_map::IntoIter<u32, LayerKind>);
-
-impl Iterator for IntoIter {
-    type Item = (u32, LayerKind);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
-    }
-}
-
-impl IntoIterator for LayerTable {
-    type Item = (u32, LayerKind);
-    type IntoIter = IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        IntoIter(self.0.into_iter())
-    }
-}
+pub use table::{LayerRef, LayerTable};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,18 +29,18 @@ pub enum LayerKind {
 
 impl LayerKind {
     fn new(value: u16) -> Result<Self> {
-        use LayerKind::*;
+        use LayerKind as K;
 
-        match value {
-            0 => Ok(RootLayer),
-            3 => Ok(Regular),
-            4 => Ok(_Unknown4),
-            5 => Ok(Linework),
-            6 => Ok(Mask),
-            7 => Ok(_Unknown7),
-            8 => Ok(Set),
-            _ => Err(FormatError::Invalid.into()),
-        }
+        Ok(match value {
+            0 => K::RootLayer,
+            3 => K::Regular,
+            4 => K::_Unknown4,
+            5 => K::Linework,
+            6 => K::Mask,
+            7 => K::_Unknown7,
+            8 => K::Set,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -171,22 +60,21 @@ pub enum BlendingMode {
 
 impl BlendingMode {
     fn new(bytes: [c_uchar; 4]) -> Result<Self> {
-        use BlendingMode::*;
+        use BlendingMode as B;
 
-        #[rustfmt::skip]
         // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
-        match unsafe { std::str::from_utf8_unchecked(&bytes) } {
-            "pass" => Ok(PassThrough),
-            "norm" => Ok(Normal),
-            "mul " => Ok(Multiply),
-            "scrn" => Ok(Screen),
-            "over" => Ok(Overlay),
-            "add " => Ok(Luminosity),
-            "sub " => Ok(Shade),
-            "adsb" => Ok(LumiShade),
-            "cbin" => Ok(Binary),
-            _ => Err(FormatError::Invalid.into()),
-        }
+        Ok(match unsafe { std::str::from_utf8_unchecked(&bytes) } {
+            "pass" => B::PassThrough,
+            "norm" => B::Normal,
+            "mul " => B::Multiply,
+            "scrn" => B::Screen,
+            "over" => B::Overlay,
+            "add " => B::Luminosity,
+            "sub " => B::Shade,
+            "adsb" => B::LumiShade,
+            "cbin" => B::Binary,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -307,27 +195,29 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub(crate) fn new(reader: &mut InodeReader<'_>, decompress_data: bool) -> Result<Self> {
-        let kind = reader.read_as_num::<u32>();
+    pub(crate) fn new(
+        reader: &mut FatEntryReader<'_>,
+        decompress_layer_data: bool,
+    ) -> Result<Self> {
+        let kind = reader.read_u32()?;
         let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
         let kind = LayerKind::new(kind)?;
 
-        let id: u32 = reader.read_as_num();
+        let id = reader.read_u32()?;
         let bounds = LayerBounds {
-            x: reader.read_as_num(),
-            y: reader.read_as_num(),
-            width: reader.read_as_num(),
-            height: reader.read_as_num(),
+            x: reader.read_i32()?,
+            y: reader.read_i32()?,
+            width: reader.read_u32()?,
+            height: reader.read_u32()?,
         };
-        let _: u32 = reader.read_as_num();
-        let opacity: u8 = reader.read_as_num();
-        let visible = reader.read_as_num::<u8>() >= 1;
-        let preserve_opacity = reader.read_as_num::<u8>() >= 1;
-        let clipping = reader.read_as_num::<u8>() >= 1;
-        let _: u8 = reader.read_as_num();
+        let _ = reader.read_u32()?;
+        let opacity = reader.read_u8()?;
+        let visible = reader.read_bool()?;
+        let preserve_opacity = reader.read_bool()?;
+        let clipping = reader.read_bool()?;
+        let _ = reader.read_u8()?;
 
-        // SAFETY: c_uchar is an alias of u8.
-        let mut blending_mode: [c_uchar; 4] = unsafe { reader.read_as() };
+        let mut blending_mode = reader.read_array::<4>()?;
         blending_mode.reverse();
         let blending_mode = BlendingMode::new(blending_mode)?;
 
@@ -354,8 +244,7 @@ impl Layer {
             // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
             match unsafe { std::str::from_utf8_unchecked(&tag) } {
                 "name" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let name: [u8; 256] = unsafe { reader.read_as() };
+                    let name = reader.read_array::<256>()?;
                     let name = CStr::from_bytes_until_nul(&name)
                         .expect("contains null character")
                         .to_owned()
@@ -364,21 +253,20 @@ impl Layer {
 
                     let _ = layer.name.insert(name);
                 }
-                "pfid" => drop(layer.parent_set.insert(reader.read_as_num())),
-                "plid" => drop(layer.parent_layer.insert(reader.read_as_num())),
-                "fopn" => drop(layer.open.insert(reader.read_as_num::<u8>() >= 1)),
+                "pfid" => drop(layer.parent_set.insert(reader.read_u32()?)),
+                "plid" => drop(layer.parent_layer.insert(reader.read_u32()?)),
+                "fopn" => drop(layer.open.insert(reader.read_bool()?)),
                 "texn" => {
-                    // SAFETY: casting a *const u8 -> *const u8.
-                    let buf: [u8; 64] = unsafe { reader.read_as() };
+                    let buf = reader.read_array::<64>()?;
                     let name = String::from_utf8_lossy(&buf);
-                    let name = TextureName::new(name.trim_end_matches("\0"))?;
+                    let name = TextureName::new(name.trim_end_matches('\0'))?;
 
                     layer.texture.get_or_insert_with(Default::default).name = name;
                 }
-                // This values are always set, even if `texn` isn't.
                 "texp" => {
-                    let scale: u16 = reader.read_as_num();
-                    let opacity: u8 = reader.read_as_num();
+                    // This values are always set, even if `texn` isn't.
+                    let scale = reader.read_u16()?;
+                    let opacity = reader.read_u8()?;
 
                     if let Some(ref mut texture) = layer.texture {
                         texture.scale = scale;
@@ -386,9 +274,9 @@ impl Layer {
                     };
                 }
                 "peff" => {
-                    let enabled = reader.read_as_num::<u8>() >= 1;
-                    let opacity: u8 = reader.read_as_num();
-                    let width: u8 = reader.read_as_num();
+                    let enabled = reader.read_bool()?;
+                    let opacity = reader.read_u8()?;
+                    let width = reader.read_u8()?;
 
                     if enabled {
                         let _ = layer.effect.insert(Effect { opacity, width });
@@ -400,7 +288,7 @@ impl Layer {
 
         let dimensions = (bounds.width as usize, bounds.height as usize);
         layer.data = match kind {
-            LayerKind::Regular if decompress_data => {
+            LayerKind::Regular if decompress_layer_data => {
                 Some(decompress_raster::<{ mem::size_of::<u32>() }>(
                     reader,
                     dimensions,
@@ -408,7 +296,7 @@ impl Layer {
                     |channel, reader, buffer| {
                         if channel == 3 {
                             for channel in 0..4 {
-                                let size: usize = reader.read_as_num::<u16>().into();
+                                let size = reader.read_u16()? as usize;
                                 reader.read_with_size(buffer, size)?;
                             }
                         }
@@ -425,7 +313,7 @@ impl Layer {
                     },
                 )?)
             }
-            LayerKind::Mask if decompress_data => {
+            LayerKind::Mask if decompress_layer_data => {
                 Some(decompress_raster::<{ mem::size_of::<u16>() }>(
                     reader,
                     dimensions,
@@ -460,9 +348,14 @@ impl Layer {
     /// }
     /// ```
     ///
+    /// # Errors
+    ///
+    /// - If it wasn't able to save the image.
+    ///
     /// # Panics
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
+    // TODO(Unavailable): size_hint: Option<SizeHint>
     pub fn to_png<P>(&self, path: Option<P>) -> Result<()>
     where
         P: AsRef<std::path::Path>,
@@ -536,7 +429,7 @@ fn rle_decompress_stride<const BPP: usize>(dst: &mut [u8], src: &[u8]) {
 }
 
 // (channel, reader, buffer)
-type DecompressedChannelCb = fn(usize, &mut InodeReader<'_>, &mut [u8; 0x800]) -> Result<()>;
+type DecompressedChannelCb = fn(usize, &mut FatEntryReader<'_>, &mut [u8; 0x800]) -> Result<()>;
 
 // (dst, src)
 //
@@ -544,7 +437,7 @@ type DecompressedChannelCb = fn(usize, &mut InodeReader<'_>, &mut [u8; 0x800]) -
 type PixelWriteCb = fn(&mut [u8], &[u8]);
 
 fn decompress_raster<const BPP: usize>(
-    reader: &mut InodeReader<'_>,
+    reader: &mut FatEntryReader<'_>,
     (width, height): (usize, usize),
     channel_decompressed: DecompressedChannelCb,
     pixel_write: PixelWriteCb,
@@ -568,7 +461,7 @@ fn decompress_raster<const BPP: usize>(
         .filter(|(y, x)| tile_map[pos2idx(*y, *x, tile_map_width)] != 0)
     {
         for channel in 0..BPP {
-            let size: usize = reader.read_as_num::<u16>().into();
+            let size = reader.read_u16()? as usize;
             reader.read_with_size(&mut rle_src, size)?;
             rle_decompress_stride::<BPP>(&mut rle_dst[channel..], &rle_src);
 

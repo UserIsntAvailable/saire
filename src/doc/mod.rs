@@ -10,8 +10,8 @@ use self::{
     thumbnail::Thumbnail,
 };
 use crate::{
-    block::data::{Inode, InodeKind},
-    fs::{reader::InodeReader, traverser::FsTraverser, FileSystemReader},
+    block::{FatEntry, FatKind},
+    fs::{reader::FatEntryReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };
 use std::{
@@ -43,28 +43,24 @@ pub enum FormatError {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use Error::*;
+        use Error as E;
 
-        let msg = match self {
-            IoError(io) => io.to_string(),
-            Format(format) => format.to_string(),
-            Unknown() => "Something went wrong while reading the file.".to_string(),
-        };
-
-        write!(f, "{msg}")
+        match self {
+            E::IoError(io) => write!(f, "{io}"),
+            E::Format(format) => write!(f, "{format}"),
+            E::Unknown() => write!(f, "Something went wrong while reading the file."),
+        }
     }
 }
 
 impl Display for FormatError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use FormatError::*;
+        use FormatError as E;
 
-        let msg = match self {
-            MissingEntry(entry) => format!("'{}' entry is missing.", entry),
-            Invalid => "Invalid/Corrupted sai file.".to_string(),
-        };
-
-        write!(f, "{msg}")
+        match self {
+            E::MissingEntry(entry) => write!(f, "'{entry}' entry is missing."),
+            E::Invalid => write!(f, "Invalid/Corrupted sai file."),
+        }
     }
 }
 
@@ -95,8 +91,8 @@ macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
         pub fn $method_name(&self) -> $crate::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
-            debug_assert!(file.kind() == &InodeKind::File);
-            let mut reader = InodeReader::new(&self.fs, file.next_block());
+            debug_assert!(file.kind() == FatKind::File);
+            let mut reader = FatEntryReader::new(&self.fs, file.next_block());
             <$return_type>::new(&mut reader)
         }
     };
@@ -142,7 +138,7 @@ impl SaiDocument {
         }
     }
 
-    fn traverse_until(&self, filename: &str) -> Result<Inode> {
+    fn traverse_until(&self, filename: &str) -> Result<FatEntry> {
         self.fs
             .traverse_root(|_, i| i.name().contains(filename))
             .ok_or(FormatError::MissingEntry(filename.to_string()).into())
@@ -166,11 +162,11 @@ impl SaiDocument {
             )
             .flat_map(|folder| {
                 folder
-                    .as_inodes()
                     .iter()
-                    .filter(|i| i.flags() != 0)
-                    .map(|i| {
-                        let mut reader = InodeReader::new(&self.fs, i.next_block());
+                    .filter(|entry| entry.flags() != 0)
+                    .map(|entry| {
+                        debug_assert!(entry.kind() == FatKind::File);
+                        let mut reader = FatEntryReader::new(&self.fs, entry.next_block());
                         Layer::new(&mut reader, decompress_layers)
                     })
                     .collect::<Vec<_>>()
@@ -204,7 +200,7 @@ impl From<&[u8]> for SaiDocument {
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
-        self.laytbl().unwrap().order(&mut layers);
+        self.laytbl().unwrap().sort_layers(&mut layers);
         layers.reverse();
 
         utils::tree::LayerTree::new(layers).fmt(f)
@@ -213,22 +209,16 @@ impl Display for SaiDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{
-        doc::canvas::{ResolutionUnit, SizeUnit},
-        doc::layer::LayerKind,
-        utils::path::read_res,
+    use super::{
+        canvas::{ResolutionUnit, SizeUnit},
+        layer::LayerKind,
+        Result, SaiDocument,
     };
-    use lazy_static::lazy_static;
-    use std::fs::read;
-
-    lazy_static! {
-        static ref BYTES: Vec<u8> = read(read_res("sample.sai")).unwrap();
-    }
+    use crate::{doc::layer::LayerRef, utils::tests::SAMPLE as BYTES};
 
     #[test]
     fn author_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let author = doc.author()?;
 
         assert_eq!(author.date_created, 1566984405);
@@ -240,13 +230,20 @@ mod tests {
 
     #[test]
     fn laybtl_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let laytbl = doc.laytbl()?;
 
-        use std::ops::Index;
+        const ID: u32 = 2;
 
-        assert_eq!(laytbl.index(2), &LayerKind::Regular);
-        assert_eq!(laytbl.order_of(2).unwrap(), 0);
+        assert_eq!(
+            laytbl[ID],
+            LayerRef {
+                id: ID,
+                kind: LayerKind::Regular,
+                tile_height: 78
+            }
+        );
+        assert_eq!(laytbl.get_index_of(ID).unwrap(), 0);
         assert_eq!(laytbl.into_iter().count(), 1);
 
         Ok(())
@@ -254,7 +251,7 @@ mod tests {
 
     #[test]
     fn layers_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let layers = doc.layers_no_decompress()?;
 
         // FIX: More tests
@@ -265,7 +262,7 @@ mod tests {
 
     #[test]
     fn canvas_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let author = doc.canvas()?;
 
         assert_eq!(author.alignment, 16);
@@ -282,13 +279,13 @@ mod tests {
 
     #[test]
     fn subtbl_is_err() {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         assert!(doc.subtbl().is_err());
     }
 
     #[test]
     fn sublayers_is_err() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         assert!(doc.sublayers().is_err());
 
         Ok(())
@@ -296,7 +293,7 @@ mod tests {
 
     #[test]
     fn thumbnail_works() -> Result<()> {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let thumbnail = doc.thumbnail()?;
 
         assert_eq!(thumbnail.width, 140);
@@ -308,7 +305,7 @@ mod tests {
 
     #[test]
     fn display_works() {
-        let doc = SaiDocument::from(BYTES.as_slice());
+        let doc = SaiDocument::from(BYTES);
         let output = doc.to_string();
 
         assert_eq!(
