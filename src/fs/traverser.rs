@@ -51,7 +51,7 @@ fn traverse_data(
                 break;
             }
 
-            match entry.kind() {
+            match entry.kind()? {
                 FatKind::File => {
                     if on_traverse(TraverseEvent::File, entry) {
                         return Some(entry.to_owned());
@@ -120,23 +120,25 @@ mod tests {
                         .expect("timestamp is not out-of-bounds.")
                         .format("%Y-%m-%d");
 
-                self.table.borrow_mut().add_row(match entry.kind() {
-                    FatKind::Folder => Row::new()
-                        .with_cell("")
-                        .with_cell("d")
-                        .with_cell(date)
-                        .with_cell(format!("{}/", entry.name())),
-                    FatKind::File => Row::new()
-                        .with_cell(entry.size())
-                        .with_cell("f")
-                        .with_cell(date)
-                        .with_cell(format!(
-                            "{empty: >width$}{}",
-                            entry.name(),
-                            empty = "",
-                            width = self.depth.get()
-                        )),
-                });
+                self.table
+                    .borrow_mut()
+                    .add_row(match entry.kind().unwrap() {
+                        FatKind::Folder => Row::new()
+                            .with_cell("")
+                            .with_cell("d")
+                            .with_cell(date)
+                            .with_cell(format!("{}/", entry.name().unwrap_or("<invalid>"))),
+                        FatKind::File => Row::new()
+                            .with_cell(entry.size())
+                            .with_cell("f")
+                            .with_cell(date)
+                            .with_cell(format!(
+                                "{empty: >width$}{}",
+                                entry.name().unwrap_or("<invalid>"),
+                                empty = "",
+                                width = self.depth.get()
+                            )),
+                    });
             }
         }
 
@@ -175,11 +177,11 @@ mod tests {
 
     #[test]
     fn traverser_returns_stopped_entry() {
-        const EXPECTED: &str = "canvas";
+        const EXPECTED_ENTRY_NAME: &str = "canvas";
 
-        let actual = FileSystemReader::from(BYTES).traverse_root(|_, i| i.name() == EXPECTED);
+        let actual = FileSystemReader::from(BYTES)
+            .traverse_root(|_, entry| entry.name().is_some_and(|name| name == EXPECTED_ENTRY_NAME));
 
-        assert!(actual.is_some());
-        assert_eq!(actual.unwrap().name(), EXPECTED);
+        assert_eq!(actual.unwrap().name().unwrap(), EXPECTED_ENTRY_NAME);
     }
 }

@@ -1,7 +1,7 @@
 pub(crate) mod reader;
 pub(crate) mod traverser;
 
-use crate::block::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTION, BLOCK_SIZE};
+use crate::block::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTOR, PAGE_SIZE};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -76,7 +76,7 @@ impl FileSystemReader {
             //
             // Caching a whole page could be OK-ish, but 2.09 MB seems a lot. I guess I could give
             // the option to users to set what amount of memory this.
-            bufreader: RefCell::new(BufReader::with_capacity(BLOCK_SIZE * 2, Box::new(reader))),
+            bufreader: RefCell::new(BufReader::with_capacity(PAGE_SIZE * 2, Box::new(reader))),
             table: HashMap::new().into(),
         }
     }
@@ -109,10 +109,10 @@ impl FileSystemReader {
         let mut reader = self.bufreader.borrow_mut();
 
         let position = reader.stream_position().unwrap();
-        let offset = (index * BLOCK_SIZE) as i64 - position as i64;
+        let offset = (index * PAGE_SIZE) as i64 - position as i64;
         reader.seek_relative(offset).unwrap();
 
-        let mut block = [0; BLOCK_SIZE];
+        let mut block = [0; PAGE_SIZE];
         reader.read(&mut block).unwrap();
 
         block.into()
@@ -124,7 +124,7 @@ impl FileSystemReader {
     ///
     /// If the sai file is corrupted ( checksums doesn't match ).
     pub(crate) fn read_data(&self, index: usize) -> (DataBlock, Option<u32>) {
-        debug_assert!(index % BLOCKS_PER_SECTION != 0);
+        debug_assert!(index % BLOCKS_PER_SECTOR != 0);
 
         let table_index = index & !0x1FF;
 
@@ -134,7 +134,7 @@ impl FileSystemReader {
                 .expect("sai file is corrupted")
         });
 
-        let entry = &table[index % BLOCKS_PER_SECTION];
+        let entry = &table[index % BLOCKS_PER_SECTOR];
 
         (
             DataBlock::decrypt(self.read_block(index), entry.checksum())

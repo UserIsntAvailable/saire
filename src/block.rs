@@ -7,30 +7,32 @@
 //! containing meta-data about the block itself and the 511 blocks after it.
 //! Every other block that is not a `TableBlock` is a [`DataBlock`].
 
-use crate::utils;
 use core::{
-    ffi::{self, CStr},
-    mem,
+    ffi::{c_uchar, CStr},
+    fmt, mem,
     ops::Deref,
     str,
 };
 
+/// Result type used through this module.
+type Result<T> = core::result::Result<T, ChecksumMismatchError>;
+
 // TODO: Should `decrypt()` return a `ChecksumMismatch` error instead of None?
 
-/// The `exact` size (on bytes) of a block.
-pub const BLOCK_SIZE: usize = 4096;
+/// The size (on bytes) of a virtual page.
+pub const PAGE_SIZE: usize = 4096;
 
 /// Represents the amount of entries that a `TableBlock` can have.
 ///
 /// See the [module documentation][crate::block] for details.
-pub const BLOCKS_PER_SECTION: usize = 512;
+pub const BLOCKS_PER_SECTOR: usize = 512;
 
 macro_rules! block_partial_impl {
     ($block_ty:ty => $alias:ident = [$entry_ty:ty]) => {
         type $alias = [$entry_ty; {
             let ty_size = mem::size_of::<$entry_ty>();
-            assert!(BLOCK_SIZE % ty_size == 0);
-            BLOCK_SIZE / ty_size
+            assert!(PAGE_SIZE % ty_size == 0);
+            PAGE_SIZE / ty_size
         }];
 
         impl $block_ty {
@@ -51,7 +53,6 @@ macro_rules! block_partial_impl {
 
         impl Deref for $block_ty {
             type Target = $alias;
-            #[inline]
             fn deref(&self) -> &Self::Target {
                 &self.0
             }
@@ -68,12 +69,11 @@ block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
 /// bytes, instead of their usual copy semantics.
 #[repr(C, /* PERF: align(4096) */)]
 #[derive(Clone, Debug)]
-pub struct VirtualPage([u8; BLOCK_SIZE]);
+pub struct VirtualPage([u8; PAGE_SIZE]);
 
 impl Deref for VirtualPage {
-    type Target = [u8; BLOCK_SIZE];
+    type Target = [u8; PAGE_SIZE];
 
-    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -85,30 +85,59 @@ impl AsRef<[u8]> for VirtualPage {
     }
 }
 
-impl From<[u8; BLOCK_SIZE]> for VirtualPage {
-    #[inline]
-    fn from(value: [u8; BLOCK_SIZE]) -> Self {
+impl From<[u8; PAGE_SIZE]> for VirtualPage {
+    fn from(value: [u8; PAGE_SIZE]) -> Self {
         Self(value)
     }
 }
+
+#[derive(Clone, Debug)]
+pub struct ChecksumMismatchError {
+    actual: u32,
+    expected: u32,
+}
+
+impl ChecksumMismatchError {
+    #[inline]
+    pub fn actual(&self) -> u32 {
+        self.actual
+    }
+
+    #[inline]
+    pub fn expected(&self) -> u32 {
+        self.expected
+    }
+}
+
+impl fmt::Display for ChecksumMismatchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "the expected checksum ({}) doesn't match the actual ({}) virtual page's checksum",
+            self.expected, self.actual
+        )
+    }
+}
+
+// CORE(error_in_core): see <https://github.com/rust-lang/rust/issues/103765>.
+impl std::error::Error for ChecksumMismatchError {}
 
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct TableEntry {
     checksum: u32,
-    // TODO: Option<NonZeroU32>.
-    next_block: u32,
+    next_block: u32, // TODO: Option<NonZeroU32>.
 }
 
 impl TableEntry {
     /// The checksum that is associated with this entry.
     #[inline]
-    pub fn checksum(&self) -> u32 {
+    pub const fn checksum(&self) -> u32 {
         self.checksum
     }
 
     #[inline]
-    pub fn next_block(&self) -> u32 {
+    pub const fn next_block(&self) -> u32 {
         self.next_block
     }
 }
@@ -127,13 +156,13 @@ impl TableBlock {
     ///
     /// # Error
     ///
-    /// Returns [`None`], if the generated checksum for this `TableBlock` doesn't
-    /// match the first checksum within this `TableBlock`.
-    pub fn decrypt<B>(bytes: B, index: u32) -> Option<Self>
+    /// Returns [`ChecksumMismatchError`], if the generated checksum for this
+    /// `TableBlock` doesn't match the first checksum within this `TableBlock`.
+    pub fn decrypt<B>(bytes: B, index: u32) -> Result<Self>
     where
         B: Into<VirtualPage>,
     {
-        fn inner(page: VirtualPage, index: u32) -> Option<TableBlock> {
+        fn inner(page: VirtualPage, index: u32) -> Result<TableBlock> {
             // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
             //
             // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
@@ -159,9 +188,12 @@ impl TableBlock {
             if actual_cksum == expected_cksum {
                 data[0] = actual_cksum;
                 // SAFETY: See safety comment above.
-                Some(unsafe { mem::transmute(data) })
+                Ok(unsafe { mem::transmute(data) })
             } else {
-                None
+                Err(ChecksumMismatchError {
+                    actual: actual_cksum,
+                    expected: expected_cksum,
+                })
             }
         }
 
@@ -170,7 +202,7 @@ impl TableBlock {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FatKind {
     Folder = 0x10,
     File = 0x80,
@@ -180,63 +212,64 @@ pub enum FatKind {
 #[derive(Clone, Debug)]
 pub struct FatEntry {
     flags: u32,
-    name: [ffi::c_uchar; 32],
+    name: [c_uchar; 32],
     _pad1: u16,
     // Not keeping FatKind directly here, because miri will complain that `0` is
     // not a valid value for it (which is true, but it is up to the user to deal
     // with that).
     kind: u8,
     _pad2: u8,
-    // TODO: Option<NonZeroU32>.
-    next_block: u32,
+    next_block: u32, // TODO: Option<NonZeroU32>.
     size: u32,
     timestamp: u64, // Windows FILETIME
     _unknown: u64,  // Gets send as a window message.
 }
 
-// TODO: I need to think how to better report errors about invalid FatEntry. I
-// don't really have a good way to do it for now, so I just gonna pretend that
-// they are always valid.
-//
-// Moving forward both `name` and `kind` should return options to indicate
-// invalid values and `*_unchecked` methods should be added in case performance
-// over 100% correctness is needed (the library gonna use the safe versions).
-
 impl FatEntry {
-    /// The flags set for this `FatEntry`.
+    /// Creates a `FatEntry` where every bit is set to zero.
+    fn zeroed() -> Self {
+        // SAFETY: 64 zero bits is a valid bit pattern for a `FatEntry`.
+        unsafe { mem::MaybeUninit::zeroed().assume_init() }
+    }
+
+    /// The bitset (flags) for this entry.
     ///
     /// I (neither Wunkolo) haven't really looked into what are the possible
-    /// values for this. As a rule of thumb, if `flags >> 24 == 0x80`, then this
-    /// `FatEntry` _might_ be valid; while this isn't a 100% guaranteed, it is
-    /// ok to call `FatEntry`'s methods, however you should still verify that
-    /// the returned values _do make sense_.
+    /// values.
     ///
-    /// If `0`, this entry is considered unused, so it would **only** have garbage
-    /// data.
+    /// As a rule of thumb, if the most significant bit is `one`, then it _might_
+    /// be a valid entry; while this isn't a 100% guaranteed, it would be ok to
+    /// call methods for that particular entry, however you should still verify
+    /// that the returned values _do make sense_.
+    ///
+    /// If `0`, this entry is considered unused, so the contents are unspecified.
     #[inline]
     pub const fn flags(&self) -> u32 {
         self.flags
     }
 
-    /// The name (ascii) of this `FatEntry`.
-    #[inline]
-    pub fn name(&self) -> &str {
-        let name = CStr::from_bytes_until_nul(&self.name)
-            .expect("contains null character")
-            .to_str()
-            .expect("UTF-8");
+    /// The name of this entry.
+    ///
+    /// Returns [`None`] if the name is not a valid UTF-8 string.
 
+    // CONST: `find` and `unwrap_or`.
+    #[inline]
+    pub fn name(&self) -> Option<&str> {
+        let name = CStr::from_bytes_until_nul(&self.name).ok()?;
+        let name = name.to_str().ok()?;
         // FIX: For some reason there is `#01` appended to the name on my sample file.
-        &name[name.find('.').unwrap_or(0)..]
+        Some(&name[name.find('.').unwrap_or(0)..])
     }
 
-    /// Whether the `FatEntry` is a `FatKind::Folder` or `FatKind::File`.
+    /// Whether this entry is a `FatKind::Folder` or `FatKind::File`.
+    ///
+    /// Returns [`None`] if it doesn't have valid values for [`FatKind`].
     #[inline]
-    pub const fn kind(&self) -> FatKind {
+    pub const fn kind(&self) -> Option<FatKind> {
         match self.kind {
-            0x10 => FatKind::Folder,
-            0x80 => FatKind::File,
-            _ => unreachable!(),
+            0x10 => Some(FatKind::Folder),
+            0x80 => Some(FatKind::File),
+            _ => None,
         }
     }
 
@@ -247,12 +280,12 @@ impl FatEntry {
     ///
     /// # FatKind::Folder
     ///
-    /// the (next) folder is located. It would be non-zero if the folder has
+    /// The (next) folder is located. It would be non-zero if the folder has
     /// more than 64 items.
     ///
     /// # FatKind::File
     ///
-    /// the contents (bytes) of this file are.
+    /// The bytes of this file are.
     ///
     /// [`kind`]: FatEntry::kind
     #[inline]
@@ -260,8 +293,8 @@ impl FatEntry {
         self.next_block
     }
 
-    /// If `self.kind == FatKind::File`, indicates the amount of contiguous
-    /// bytes to read from [`next_block`] to get **all** the file contents.
+    /// Indicates the amount of contiguous bytes to read from [`next_block`] (if
+    /// not zero) to get all the entry contents.
     ///
     /// [`next_block`]: FatEntry::next_block
     #[inline]
@@ -281,7 +314,7 @@ impl FatEntry {
     /// Represents the number of seconds since `January 1, 1970` (epoch).
     #[inline]
     pub const fn timestamp_unix(&self) -> u64 {
-        utils::time::to_epoch(self.timestamp)
+        crate::utils::time::to_epoch(self.timestamp)
     }
 }
 
@@ -297,13 +330,13 @@ impl DataBlock {
     ///
     /// # Error
     ///
-    /// Returns [`None`], if the generated checksum for this `DataBlock` doesn't
-    /// match the provided checksum (cksum).
-    pub fn decrypt<B>(bytes: B, cksum: u32) -> Option<Self>
+    /// Returns [`ChecksumMismatchError`], if the generated checksum for this
+    /// `DataBlock` doesn't match the provided checksum (cksum).
+    pub fn decrypt<B>(bytes: B, cksum: u32) -> Result<Self>
     where
         B: Into<VirtualPage>,
     {
-        fn inner(page: VirtualPage, cksum: u32) -> Option<DataBlock> {
+        fn inner(page: VirtualPage, cksum: u32) -> Result<DataBlock> {
             // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
             //
             // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
@@ -321,11 +354,16 @@ impl DataBlock {
                 value
             });
 
-            // SAFETY: See safety comment above.
-            //
-            // To circumvent the padding requirement, FatEntry has "manual" padded bytes (_pad*
-            // fields), instead of letting repr(C) to do it automatically.
-            (checksum(&data) == cksum).then_some(unsafe { mem::transmute(data) })
+            let actual = checksum(&data);
+            if actual == cksum {
+                // SAFETY: See safety comment above.
+                Ok(unsafe { mem::transmute(data) })
+            } else {
+                Err(ChecksumMismatchError {
+                    actual,
+                    expected: cksum,
+                })
+            }
         }
 
         inner(bytes.into(), cksum)
@@ -334,16 +372,15 @@ impl DataBlock {
 
 #[inline]
 fn checksum(block: &[u32; 1024]) -> u32 {
-    // PERF: no auto-vectorization
-    block.iter().fold(0u32, |s, e| s.rotate_left(1) ^ e) | 1
+    block.iter().fold(0u32, |sum, e| sum.rotate_left(1) ^ e) | 1
 }
 
 #[inline]
 fn decrypt(value: u32) -> u32 {
-    // PERF: no auto-vectorization
-    (0..=24)
-        .step_by(8)
-        .fold(0, |s, i| s + USER[((value >> i) & 0xFF) as usize] as usize) as u32
+    (0..=24).step_by(8).fold(0, |sum, index| {
+        let index = (value >> index) & 0xFF;
+        sum.wrapping_add(USER[index as usize])
+    })
 }
 
 const USER: [u32; 256] = [
@@ -387,24 +424,24 @@ mod tests {
     use crate::utils::tests::SAMPLE as BYTES;
 
     #[inline(always)]
-    fn table() -> [u8; BLOCK_SIZE] {
-        BYTES[..BLOCK_SIZE].try_into().unwrap()
+    fn table() -> [u8; PAGE_SIZE] {
+        BYTES[..PAGE_SIZE].try_into().unwrap()
     }
 
     #[inline(always)]
-    fn data() -> [u8; BLOCK_SIZE] {
-        BYTES[BLOCK_SIZE * 2..][..BLOCK_SIZE].try_into().unwrap()
+    fn data() -> [u8; PAGE_SIZE] {
+        BYTES[PAGE_SIZE * 2..][..PAGE_SIZE].try_into().unwrap()
     }
 
     #[test]
     fn table_decrypt_works() {
-        assert!(TableBlock::decrypt(table(), 0).is_some());
+        TableBlock::decrypt(table(), 0).unwrap();
     }
 
     #[test]
     fn data_decrypt_works() {
         let table = TableBlock::decrypt(table(), 0).unwrap();
-        assert!(DataBlock::decrypt(data(), table[2].checksum).is_some());
+        DataBlock::decrypt(data(), table[2].checksum).unwrap();
     }
 
     #[test]
@@ -414,10 +451,18 @@ mod tests {
 
         let entry = &data[0];
 
-        assert_eq!(entry.flags(), 0x80000000);
-        assert_eq!(entry.name(), ".73851dcd1203b24d");
-        assert_eq!(entry.kind(), FatKind::File);
+        assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
+        assert_eq!(entry.name().unwrap(), ".73851dcd1203b24d");
+        assert_eq!(entry.kind().unwrap(), FatKind::File);
         assert_eq!(entry.size(), 32);
+        assert_eq!(entry.timestamp_unix(), 1567531938); // 09/03/2019 @ 05:32pm
+
+        let entry = &data[3];
+
+        assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
+        assert_eq!(entry.name().unwrap(), "layers");
+        assert_eq!(entry.kind().unwrap(), FatKind::Folder);
+        assert_eq!(entry.size(), 64); // always 64, because `size_of<FatEntry> == 64`.
         assert_eq!(entry.timestamp_unix(), 1567531938); // 09/03/2019 @ 05:32pm
     }
 }

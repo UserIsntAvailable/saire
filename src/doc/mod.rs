@@ -139,7 +139,7 @@ impl SaiDocument {
 
     fn traverse_until(&self, filename: &str) -> Result<FatEntry> {
         self.fs
-            .traverse_root(|_, i| i.name().contains(filename))
+            .traverse_root(|_, entry| entry.name().is_some_and(|name| name.contains(filename)))
             .ok_or(FormatError::MissingEntry(filename.to_string()).into())
     }
 

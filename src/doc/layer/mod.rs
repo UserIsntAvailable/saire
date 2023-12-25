@@ -1,7 +1,7 @@
 mod table;
 
 use super::{FatEntryReader, FormatError, Result};
-use crate::block::BLOCK_SIZE;
+use crate::block::PAGE_SIZE;
 use itertools::Itertools;
 use std::{
     cmp::Ordering,
@@ -357,7 +357,7 @@ impl Layer {
 
 fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     const STRIDE: usize = std::mem::size_of::<u32>();
-    const STRIDE_COUNT: usize = BLOCK_SIZE / STRIDE;
+    const STRIDE_COUNT: usize = PAGE_SIZE / STRIDE;
 
     let mut src = src.iter();
     let mut dst = dst.iter_mut();
@@ -406,8 +406,8 @@ fn decompress_layer(
     // Prevents `tile_map` to be mutable.
     let tile_map = tile_map;
     let mut pixels = vec![0; width * height * 4];
-    let mut rle_dst = [0; BLOCK_SIZE];
-    let mut rle_src = [0; BLOCK_SIZE / 2];
+    let mut rle_dst = [0; PAGE_SIZE];
+    let mut rle_src = [0; PAGE_SIZE / 2];
 
     let pos2idx = |y, x, stride| y * stride + x;
 

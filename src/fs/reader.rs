@@ -1,5 +1,5 @@
 use super::FileSystemReader;
-use crate::block::{FatEntry, FatKind, VirtualPage, BLOCK_SIZE};
+use crate::block::{FatEntry, FatKind, VirtualPage, PAGE_SIZE};
 use crate::Result;
 use std::{
     ffi,
@@ -29,7 +29,7 @@ pub(crate) struct FatEntryReader<'a> {
 
 impl<'a> FatEntryReader<'a> {
     pub(crate) fn new(fs: &'a FileSystemReader, entry: &FatEntry) -> Self {
-        debug_assert!(entry.kind() == FatKind::File);
+        debug_assert!(entry.kind().is_some_and(|kind| kind == FatKind::File));
 
         Self {
             cur_block: Some(entry.next_block()),
@@ -52,7 +52,7 @@ impl<'a> FatEntryReader<'a> {
             if let Some(ref mut reader) = self.cursor {
                 let position = reader.position() as usize;
 
-                if left_to_read + position >= BLOCK_SIZE {
+                if left_to_read + position >= PAGE_SIZE {
                     // This will be the same as doing:
                     //
                     // let mut bytes = Vec::new();
@@ -60,7 +60,7 @@ impl<'a> FatEntryReader<'a> {
                     //
                     // However, preallocating the Vec should be faster, and also I can guaranteed
                     // that the exactly amount of bytes are being read.
-                    let mut bytes = vec![0; BLOCK_SIZE - position];
+                    let mut bytes = vec![0; PAGE_SIZE - position];
                     reader.read_exact(&mut bytes)?;
                     writer.write(&bytes)?;
 
