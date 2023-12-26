@@ -43,25 +43,23 @@ pub(crate) mod image {
 }
 
 #[cfg(test)]
-pub(crate) mod path {
-    use std::path::{Path, PathBuf};
-
-    /// Gets a file from `resources` folder.
-    pub(crate) fn read_res(res: impl AsRef<Path>) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(".resources")
-            .join(res)
-    }
-}
-
-#[cfg(test)]
 pub(crate) mod tests {
-    pub(crate) const SAMPLE: &[u8] = include_bytes!("../../.resources/sample.sai");
+    /// Gets the bytes from a file from the ".resources" folder.
+    macro_rules! resource {
+        ($file:literal) => {
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.resources/", $file))
+        };
+    }
+
+    /// `sample.sai` bytes.
+    pub const SAMPLE: &[u8] = resource!("sample.sai");
+
+    pub(crate) use resource;
 }
 
 pub(crate) mod time {
     /// Converts a `Windows FILETIME` timestamp to an `epoch` timestamp.
-    pub(crate) const fn to_epoch(w_timestamp: u64) -> u64 {
+    pub const fn to_epoch(w_timestamp: u64) -> u64 {
         w_timestamp / 10000000 - 11644473600
     }
 }

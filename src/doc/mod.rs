@@ -114,12 +114,7 @@ macro_rules! layers_no_decompress_method {
 }
 
 impl SaiDocument {
-    // TODO: Make public when FileSystem implements `try_from`.
-    fn new(path: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self {
-            fs: FileSystemReader::new(File::open(path)?),
-        })
-    }
+    // TODO: Fallible `new`.
 
     /// Creates a `SaiDocument` without checking if the file is valid.
     ///
@@ -186,7 +181,10 @@ impl SaiDocument {
     // TODO: Add the ability to re-parse the Layer to get the layer data at a later time.
 
     layers_no_decompress_method!(layers_no_decompress, "layers");
-    layers_no_decompress_method!(sublayers_no_decompress, "sublayers");
+
+    // TEST: I need a more "complicated" sample file.
+    //
+    // layers_no_decompress_method!(sublayers_no_decompress, "sublayers");
 }
 
 impl From<&[u8]> for SaiDocument {
@@ -269,7 +267,7 @@ mod tests {
         assert_eq!(author.dots_per_inch.unwrap(), 72.0);
         assert_eq!(author.size_unit.unwrap(), SizeUnit::Pixels);
         assert_eq!(author.resolution_unit.unwrap(), ResolutionUnit::PixelsInch);
-        assert!(author.selection_source.is_none());
+        assert_eq!(author.selection_source, None);
         assert_eq!(author.selected_layer.unwrap(), 2);
 
         Ok(())

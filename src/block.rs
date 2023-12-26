@@ -1,3 +1,6 @@
+// TODO: Remove when making "pub"
+#![allow(dead_code)]
+
 //! A `.sai` file is encrypted in ECB blocks in which any randomly accessed
 //! block can be decrypted by also decrypting the appropriate [`TableBlock`]
 //! and accessing its 32-bit key found within.
@@ -16,8 +19,6 @@ use core::{
 
 /// Result type used through this module.
 type Result<T> = core::result::Result<T, ChecksumMismatchError>;
-
-// TODO: Should `decrypt()` return a `ChecksumMismatch` error instead of None?
 
 /// The size (on bytes) of a virtual page.
 pub const PAGE_SIZE: usize = 4096;
@@ -99,12 +100,12 @@ pub struct ChecksumMismatchError {
 
 impl ChecksumMismatchError {
     #[inline]
-    pub fn actual(&self) -> u32 {
+    pub const fn actual(&self) -> u32 {
         self.actual
     }
 
     #[inline]
-    pub fn expected(&self) -> u32 {
+    pub const fn expected(&self) -> u32 {
         self.expected
     }
 }
@@ -250,7 +251,8 @@ impl FatEntry {
 
     /// The name of this entry.
     ///
-    /// Returns [`None`] if the name is not a valid UTF-8 string.
+    /// Returns [`None`] if the name does not have valid UTF-8 characters or if
+    /// it is the empty string.
 
     // CONST: `find` and `unwrap_or`.
     #[inline]
@@ -258,7 +260,7 @@ impl FatEntry {
         let name = CStr::from_bytes_until_nul(&self.name).ok()?;
         let name = name.to_str().ok()?;
         // FIX: For some reason there is `#01` appended to the name on my sample file.
-        Some(&name[name.find('.').unwrap_or(0)..])
+        (!name.is_empty()).then(|| &name[name.find('.').unwrap_or(0)..])
     }
 
     /// Whether this entry is a `FatKind::Folder` or `FatKind::File`.
@@ -280,8 +282,8 @@ impl FatEntry {
     ///
     /// # FatKind::Folder
     ///
-    /// The (next) folder is located. It would be non-zero if the folder has
-    /// more than 64 items.
+    /// The next folder is located. It would be non-zero if the folder has more
+    /// than 64 entries.
     ///
     /// # FatKind::File
     ///

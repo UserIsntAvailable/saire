@@ -1,5 +1,4 @@
-#![allow(dead_code, unused_variables)]
-#![deny(unsafe_op_in_unsafe_fn)]
+#![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
 #![allow(
     clippy::cast_lossless,

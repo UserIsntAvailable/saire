@@ -39,12 +39,7 @@ pub(crate) struct FileSystemReader {
 }
 
 impl FileSystemReader {
-    /// Creates a `FileSystemReader` first checking if all `SaiBlock`s inside have valid checksums.
-    pub(crate) fn new(reader: impl ReadSeek + 'static) -> Self {
-        Self::new_unchecked(reader);
-
-        todo!("verify blocks")
-    }
+    // TODO: Fallible `new`.
 
     /// Creates a `FileSystemReader` without checking if all `SaiBlock`s inside are indeed valid.
     ///
@@ -92,16 +87,15 @@ impl FileSystemReader {
     // Before implementing all of that, I want to finish the v.0.2.0 to see if there is a *big*
     // advantage of doing that.
 
-    /// Relative seek from `self.offset` to `amount` of bytes.
-    fn seek(&self, offset: u64) -> u64 {
-        // TODO: Handle `Result`.
-        self.bufreader
-            .borrow_mut()
-            .seek_relative(offset as i64)
-            .unwrap();
-
-        self.bufreader.borrow_mut().stream_position().unwrap()
-    }
+    // fn seek(&self, offset: u64) -> u64 {
+    //     // TODO: Handle `Result`.
+    //     self.bufreader
+    //         .borrow_mut()
+    //         .seek_relative(offset as i64)
+    //         .unwrap();
+    //
+    //     self.bufreader.borrow_mut().stream_position().unwrap()
+    // }
 
     // TODO: Remove unwraps
     /// Gets the `SaiBlock`'s bytes at the specified `index`.
