@@ -91,6 +91,8 @@ mod tests {
         cell::{Cell, RefCell},
         fmt::Display,
     };
+
+    // TODO: This is useless ('<', '^', '>'). std formatter can _apparently_ already do it.
     use tabular::{Row, Table};
 
     #[test]
@@ -116,7 +118,7 @@ mod tests {
 
             fn add_row(&self, entry: &FatEntry) {
                 let date =
-                    chrono::NaiveDateTime::from_timestamp_opt(entry.timestamp_unix() as i64, 0)
+                    chrono::NaiveDateTime::from_timestamp_opt(entry.unixtime() as i64, 0)
                         .expect("timestamp is not out-of-bounds.")
                         .format("%Y-%m-%d");
 

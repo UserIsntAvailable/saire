@@ -222,7 +222,7 @@ pub struct FatEntry {
     _pad2: u8,
     next_block: u32, // TODO: Option<NonZeroU32>.
     size: u32,
-    timestamp: u64, // Windows FILETIME
+    filetime: u64, // Windows FILETIME
     _unknown: u64,  // Gets send as a window message.
 }
 
@@ -309,14 +309,14 @@ impl FatEntry {
     ///
     /// See also: <https://learn.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-filetime>
     #[inline]
-    pub const fn timestamp(&self) -> u64 {
-        self.timestamp
+    pub const fn filetime(&self) -> u64 {
+        self.filetime
     }
 
     /// Represents the number of seconds since `January 1, 1970` (epoch).
     #[inline]
-    pub const fn timestamp_unix(&self) -> u64 {
-        crate::utils::time::to_epoch(self.timestamp)
+    pub const fn unixtime(&self) -> u64 {
+        crate::utils::time::filetime_to_epoch(self.filetime)
     }
 }
 
@@ -457,7 +457,7 @@ mod tests {
         assert_eq!(entry.name().unwrap(), ".73851dcd1203b24d");
         assert_eq!(entry.kind().unwrap(), FatKind::File);
         assert_eq!(entry.size(), 32);
-        assert_eq!(entry.timestamp_unix(), 1567531938); // 09/03/2019 @ 05:32pm
+        assert_eq!(entry.unixtime(), 1567531938); // 09/03/2019 @ 05:32pm
 
         let entry = &data[3];
 
@@ -465,6 +465,6 @@ mod tests {
         assert_eq!(entry.name().unwrap(), "layers");
         assert_eq!(entry.kind().unwrap(), FatKind::Folder);
         assert_eq!(entry.size(), 64); // always 64, because `size_of<FatEntry> == 64`.
-        assert_eq!(entry.timestamp_unix(), 1567531938); // 09/03/2019 @ 05:32pm
+        assert_eq!(entry.unixtime(), 1567531938); // 09/03/2019 @ 05:32pm
     }
 }
