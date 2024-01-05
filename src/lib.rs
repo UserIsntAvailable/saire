@@ -10,6 +10,8 @@ pub mod doc;
 pub mod utils;
 
 pub(crate) mod block;
+pub(crate) mod vfs;
+
 pub(crate) mod fs;
 
 pub use doc::{Error, FormatError, Result, SaiDocument};
