@@ -32,7 +32,7 @@ impl Author {
             // consistency.
             let filetime = date * 10000000;
 
-            Ok(utils::time::filetime_to_epoch(filetime))
+            Ok(utils::time::filetime_to_unixtime(filetime))
         };
 
         Ok(Self {

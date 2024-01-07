@@ -72,6 +72,20 @@ block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
 #[derive(Clone, Debug)]
 pub struct VirtualPage([u8; PAGE_SIZE]);
 
+impl VirtualPage {
+    fn into_u32_array(self) -> [u32; 1024] {
+        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
+        //
+        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
+        // so their alignment is not a concern, because transmute is a by-value operation; the
+        // compiler ensures that both Src and Dst are properly aligned.
+        //
+        // Furthermore, because integers are plain old data types, you can always transmute to
+        // them, although keep in mind that FIX: byte order would be platform dependant.
+        unsafe { mem::transmute(self) }
+    }
+}
+
 impl Deref for VirtualPage {
     type Target = [u8; PAGE_SIZE];
 
@@ -82,6 +96,12 @@ impl Deref for VirtualPage {
 
 impl AsRef<[u8]> for VirtualPage {
     fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8; PAGE_SIZE]> for VirtualPage {
+    fn as_ref(&self) -> &[u8; PAGE_SIZE] {
         &self.0
     }
 }
@@ -164,41 +184,52 @@ impl TableBlock {
         B: Into<VirtualPage>,
     {
         fn inner(page: VirtualPage, index: u32) -> Result<TableBlock> {
-            // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-            //
-            // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
-            // so their alignment is not a concern, because transmute is a by-value operation; the
-            // compiler ensures that both Src and Dst are properly aligned.
-            //
-            // Furthermore, because integers are plain old data types, you can always transmute to
-            // them, although keep in mind that FIX: byte order would be platform dependant.
-            let mut data: [u32; 1024] = unsafe { mem::transmute(page) };
+            let mut data = page.into_u32_array();
 
-            // PERF: no auto-vectorization.
-            data.iter_mut().fold(index, |prev, current| {
-                let key = prev ^ *current ^ decrypt(prev);
-                let prev = *current;
-                *current = key.rotate_left(16);
-                prev
+            data.iter_mut().fold(index, |prev, curr| {
+                let key = prev ^ *curr ^ mask(prev);
+                mem::replace(curr, key.rotate_left(16))
             });
 
-            let expected_cksum = data[0];
-            data[0] = 0;
-            let actual_cksum = checksum(&data);
+            let expected_checksum = mem::take(&mut data[0]);
+            let actual_checksum = checksum(&data);
 
-            if actual_cksum == expected_cksum {
-                data[0] = actual_cksum;
-                // SAFETY: See safety comment above.
-                Ok(unsafe { mem::transmute(data) })
-            } else {
-                Err(ChecksumMismatchError {
-                    actual: actual_cksum,
-                    expected: expected_cksum,
-                })
-            }
+            if actual_checksum != expected_checksum {
+                return Err(ChecksumMismatchError {
+                    actual: actual_checksum,
+                    expected: expected_checksum,
+                });
+            };
+
+            data[0] = actual_checksum;
+            // SAFETY: See `into_u32_array` safety comment.
+            Ok(unsafe { mem::transmute(data) })
         }
 
         inner(bytes.into(), index)
+    }
+
+    /// Encrypts the contents of this `TableBlock`.
+    // TODO: I can't seriously believe that you are forced to keep track of the
+    // index to be able to encrypt a `TableBlock`.
+    pub fn encrypt(self, index: u32) -> VirtualPage {
+        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
+        //
+        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
+        // so their alignment is not a concern, because transmute is a by-value operation; the
+        // compiler ensures that both Src and Dst are properly aligned.
+        //
+        // Furthermore, because integers are plain old data types, you can always transmute to
+        // them, although keep in mind that FIX: byte order would be platform dependant.
+        let mut data: [u32; 1024] = unsafe { mem::transmute(self) };
+
+        data.iter_mut().fold(index, |prev, curr| {
+            *curr = prev ^ curr.rotate_left(16) ^ mask(prev);
+            *curr
+        });
+
+        // SAFETY: See safety comment above.
+        unsafe { mem::transmute(data) }
     }
 }
 
@@ -223,14 +254,14 @@ pub struct FatEntry {
     next_block: u32, // TODO: Option<NonZeroU32>.
     size: u32,
     filetime: u64, // Windows FILETIME
-    _unknown: u64,  // Gets send as a window message.
+    _unknown: u64, // Gets send as a window message.
 }
 
 impl FatEntry {
     /// Creates a `FatEntry` where every bit is set to zero.
     fn zeroed() -> Self {
         // SAFETY: 64 zero bits is a valid bit pattern for a `FatEntry`.
-        unsafe { mem::MaybeUninit::zeroed().assume_init() }
+        unsafe { mem::zeroed() }
     }
 
     /// The bitset (flags) for this entry.
@@ -316,7 +347,7 @@ impl FatEntry {
     /// Represents the number of seconds since `January 1, 1970` (epoch).
     #[inline]
     pub const fn unixtime(&self) -> u64 {
-        crate::utils::time::filetime_to_epoch(self.filetime)
+        crate::utils::time::filetime_to_unixtime(self.filetime)
     }
 }
 
@@ -333,42 +364,59 @@ impl DataBlock {
     /// # Error
     ///
     /// Returns [`ChecksumMismatchError`], if the generated checksum for this
-    /// `DataBlock` doesn't match the provided checksum (cksum).
-    pub fn decrypt<B>(bytes: B, cksum: u32) -> Result<Self>
+    /// `DataBlock` doesn't match the provided checksum (checksum).
+    pub fn decrypt<B>(bytes: B, checksum: u32) -> Result<Self>
     where
         B: Into<VirtualPage>,
     {
-        fn inner(page: VirtualPage, cksum: u32) -> Result<DataBlock> {
-            // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-            //
-            // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
-            // so their alignment is not a concern, because transmute is a by-value operation; the
-            // compiler ensures that both Src and Dst are properly aligned.
-            //
-            // Furthermore, because integers are plain old data types, you can always transmute to
-            // them, although keep in mind that FIX: byte order would be platform dependant.
-            let mut data: [u32; 1024] = unsafe { mem::transmute(page) };
+        fn inner(page: VirtualPage, checksum: u32) -> Result<DataBlock> {
+            let mut data = page.into_u32_array();
 
-            // PERF: no auto-vectorization.
-            data.iter_mut().fold(cksum, |prev, current| {
-                let value = *current;
-                *current = value.wrapping_sub(prev ^ decrypt(prev));
-                value
+            data.iter_mut().fold(checksum, |prev, curr| {
+                mem::replace(curr, curr.wrapping_sub(prev ^ mask(prev)))
             });
 
-            let actual = checksum(&data);
-            if actual == cksum {
-                // SAFETY: See safety comment above.
-                Ok(unsafe { mem::transmute(data) })
-            } else {
-                Err(ChecksumMismatchError {
+            let actual = self::checksum(&data);
+
+            if actual != checksum {
+                return Err(ChecksumMismatchError {
                     actual,
-                    expected: cksum,
-                })
-            }
+                    expected: checksum,
+                });
+            };
+
+            // SAFETY: See `into_u32_array` safety comment.
+            Ok(unsafe { mem::transmute(data) })
         }
 
-        inner(bytes.into(), cksum)
+        inner(bytes.into(), checksum)
+    }
+
+    /// Encrypts the contents of this `DataBlock`.
+    ///
+    /// If checksum is `None`, then it would be calculated with the data of this
+    /// block, otherwise the provided one gonna be used. If you didn't got the
+    /// `checksum` from the appropriate `TableBlock` entry, then it would wise to
+    /// pass `None`, to not risk encrypting the block with a bad one.
+    pub fn encrypt(self, checksum: Option<u32>) -> VirtualPage {
+        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
+        //
+        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
+        // so their alignment is not a concern, because transmute is a by-value operation; the
+        // compiler ensures that both Src and Dst are properly aligned.
+        //
+        // Furthermore, because integers are plain old data types, you can always transmute to
+        // them, although keep in mind that FIX: byte order would be platform dependant.
+        let mut data: [u32; 1024] = unsafe { mem::transmute(self) };
+        let checksum = checksum.unwrap_or_else(|| self::checksum(&data));
+
+        data.iter_mut().fold(checksum, |prev, curr| {
+            *curr = curr.wrapping_add(prev ^ mask(prev));
+            *curr
+        });
+
+        // SAFETY: See safety comment above.
+        unsafe { mem::transmute(data) }
     }
 }
 
@@ -378,7 +426,7 @@ fn checksum(block: &[u32; 1024]) -> u32 {
 }
 
 #[inline]
-fn decrypt(value: u32) -> u32 {
+fn mask(value: u32) -> u32 {
     (0..=24).step_by(8).fold(0, |sum, index| {
         let index = (value >> index) & 0xFF;
         sum.wrapping_add(USER[index as usize])
@@ -425,31 +473,24 @@ mod tests {
     use super::*;
     use crate::utils::tests::SAMPLE as BYTES;
 
+    const TABLE_INDEX: u32 = 0;
+    const ROOT_INDEX: usize = 2;
+
     #[inline(always)]
     fn table() -> [u8; PAGE_SIZE] {
         BYTES[..PAGE_SIZE].try_into().unwrap()
     }
 
     #[inline(always)]
+    #[rustfmt::skip]
     fn data() -> [u8; PAGE_SIZE] {
-        BYTES[PAGE_SIZE * 2..][..PAGE_SIZE].try_into().unwrap()
+        BYTES[PAGE_SIZE * ROOT_INDEX..][..PAGE_SIZE].try_into().unwrap()
     }
 
     #[test]
-    fn table_decrypt_works() {
-        TableBlock::decrypt(table(), 0).unwrap();
-    }
-
-    #[test]
-    fn data_decrypt_works() {
-        let table = TableBlock::decrypt(table(), 0).unwrap();
-        DataBlock::decrypt(data(), table[2].checksum).unwrap();
-    }
-
-    #[test]
-    fn data_decrypt_has_valid_data() {
-        let table = TableBlock::decrypt(table(), 0).unwrap();
-        let data = DataBlock::decrypt(data(), table[2].checksum).unwrap();
+    fn decrypt_works() {
+        let table = TableBlock::decrypt(table(), TABLE_INDEX).unwrap();
+        let data = DataBlock::decrypt(data(), table[ROOT_INDEX].checksum).unwrap();
 
         let entry = &data[0];
 
@@ -466,5 +507,20 @@ mod tests {
         assert_eq!(entry.kind().unwrap(), FatKind::Folder);
         assert_eq!(entry.size(), 64); // always 64, because `size_of<FatEntry> == 64`.
         assert_eq!(entry.unixtime(), 1567531938); // 09/03/2019 @ 05:32pm
+    }
+
+    #[test]
+    fn encrypt_works() {
+        let table_block = TableBlock::decrypt(table(), TABLE_INDEX).unwrap();
+        let checksum = table_block[ROOT_INDEX].checksum();
+        assert!(*table_block.encrypt(TABLE_INDEX).deref() == table());
+
+        // With provided checksum
+        let data_block = DataBlock::decrypt(data(), checksum).unwrap();
+        assert!(*data_block.encrypt(Some(checksum)).deref() == data());
+
+        // With "unknown" checksum
+        let data_block = DataBlock::decrypt(data(), checksum).unwrap();
+        assert!(*data_block.encrypt(None).deref() == data());
     }
 }
