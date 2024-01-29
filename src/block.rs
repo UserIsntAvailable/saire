@@ -490,13 +490,14 @@ mod tests {
     #[test]
     fn decrypt_works() {
         let table = TableBlock::decrypt(table(), TABLE_INDEX).unwrap();
-        let data = DataBlock::decrypt(data(), table[ROOT_INDEX].checksum).unwrap();
+        let data = DataBlock::decrypt(data(), table[ROOT_INDEX].checksum()).unwrap();
 
         let entry = &data[0];
 
         assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
         assert_eq!(entry.name().unwrap(), ".73851dcd1203b24d");
         assert_eq!(entry.kind().unwrap(), FatKind::File);
+        assert_eq!(entry.next_block(), 3);
         assert_eq!(entry.size(), 32);
         assert_eq!(entry.unixtime(), 1567531938); // 09/03/2019 @ 05:32pm
 
@@ -505,6 +506,7 @@ mod tests {
         assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
         assert_eq!(entry.name().unwrap(), "layers");
         assert_eq!(entry.kind().unwrap(), FatKind::Folder);
+        assert_eq!(entry.next_block(), 6);
         assert_eq!(entry.size(), 64); // always 64, because `size_of<FatEntry> == 64`.
         assert_eq!(entry.unixtime(), 1567531938); // 09/03/2019 @ 05:32pm
     }
@@ -513,14 +515,14 @@ mod tests {
     fn encrypt_works() {
         let table_block = TableBlock::decrypt(table(), TABLE_INDEX).unwrap();
         let checksum = table_block[ROOT_INDEX].checksum();
-        assert!(*table_block.encrypt(TABLE_INDEX).deref() == table());
+        assert!(*table_block.encrypt(TABLE_INDEX) == table());
 
         // With provided checksum
         let data_block = DataBlock::decrypt(data(), checksum).unwrap();
-        assert!(*data_block.encrypt(Some(checksum)).deref() == data());
+        assert!(*data_block.encrypt(Some(checksum)) == data());
 
         // With "unknown" checksum
         let data_block = DataBlock::decrypt(data(), checksum).unwrap();
-        assert!(*data_block.encrypt(None).deref() == data());
+        assert!(*data_block.encrypt(None) == data());
     }
 }

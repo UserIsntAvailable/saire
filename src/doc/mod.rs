@@ -21,12 +21,12 @@ use std::{
     path::Path,
 };
 
-// TODO: documentation.
+// DOCS:
 // TODO: serde feature.
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-// TODO:
+// TODO: Simplify error handling
 
 #[derive(Debug)]
 pub enum Error {
@@ -215,11 +215,12 @@ mod tests {
     #[test]
     fn author_works() -> Result<()> {
         let doc = SaiDocument::from(BYTES);
+
         let author = doc.author()?;
 
         assert_eq!(author.date_created, 1566984405);
         assert_eq!(author.date_modified, 1567531929);
-        assert_eq!(author.machine_hash, "73851dcd1203b24d");
+        assert_eq!(author.machine_hash, 0x73851dcd1203b24d);
 
         Ok(())
     }

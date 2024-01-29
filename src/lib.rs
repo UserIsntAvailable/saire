@@ -9,7 +9,7 @@
 pub mod doc;
 pub mod utils;
 
-// TODO: rename to cipher?.
+// TODO: rename to cipher?
 pub(crate) mod block;
 pub(crate) mod fs;
 
