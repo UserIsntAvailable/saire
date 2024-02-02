@@ -1,5 +1,5 @@
 use super::FileSystemReader;
-use crate::block::{FatEntry, FatKind, VirtualPage, PAGE_SIZE};
+use crate::cipher::{FatEntry, FatKind, VirtualPage, PAGE_SIZE};
 use crate::Result;
 use std::{
     ffi,

@@ -1,7 +1,7 @@
 mod table;
 
 use super::{FatEntryReader, FormatError, Result};
-use crate::block::PAGE_SIZE;
+use crate::cipher::PAGE_SIZE;
 use itertools::Itertools;
 use std::{
     cmp::Ordering,

@@ -9,8 +9,7 @@
 pub mod doc;
 pub mod utils;
 
-// TODO: rename to cipher?
-pub(crate) mod block;
+pub(crate) mod cipher;
 pub(crate) mod fs;
 
 pub use doc::{Error, FormatError, Result, SaiDocument};

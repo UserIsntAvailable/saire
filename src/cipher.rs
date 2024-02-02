@@ -254,7 +254,9 @@ pub struct FatEntry {
     next_block: u32, // TODO: Option<NonZeroU32>.
     size: u32,
     filetime: u64, // Windows FILETIME
-    _unknown: u64, // Gets send as a window message.
+    // NOTE(rev-eng:libsai): Gets send as a window message.
+    // NOTE(rev-eng): Always zero (at least it is in **ALL** my sai files).
+    _unknown: u64,
 }
 
 impl FatEntry {
@@ -433,6 +435,7 @@ fn mask(value: u32) -> u32 {
     })
 }
 
+/// S-Box for .sai `user` generated files.
 const USER: [u32; 256] = [
     0x9913D29E, 0x83F58D3D, 0xD0BE1526, 0x86442EB7, 0x7EC69BFB, 0x89D75F64, 0xFB51B239, 0xFF097C56,
     0xA206EF1E, 0x973D668D, 0xC383770D, 0x1CB4CCEB, 0x36F7108B, 0x40336BCD, 0x84D123BD, 0xAFEF5DF3,

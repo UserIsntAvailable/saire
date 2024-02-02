@@ -10,7 +10,7 @@ use self::{
     thumbnail::Thumbnail,
 };
 use crate::{
-    block::FatEntry,
+    cipher::FatEntry,
     fs::{reader::FatEntryReader, traverser::FsTraverser, FileSystemReader},
     utils,
 };

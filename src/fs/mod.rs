@@ -1,7 +1,7 @@
 pub(crate) mod reader;
 pub(crate) mod traverser;
 
-use crate::block::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTOR, PAGE_SIZE};
+use crate::cipher::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTOR, PAGE_SIZE};
 use std::{
     cell::RefCell,
     collections::HashMap,
