@@ -9,7 +9,10 @@ pub mod entry;
 pub mod pager;
 
 use crate::block::PAGE_SIZE;
-use core::ops::{Deref, DerefMut};
+use core::{
+    ops::{Deref, DerefMut},
+    result,
+};
 // NIGHTLY(core_io_error): https://github.com/rust-lang/rust/pull/116685.
 //
 // I'm gonna claim it if nobody does it...
@@ -62,22 +65,19 @@ pub trait Pager {
     ///
     /// You shouldn't rely on the output of this method for correctness; it could
     /// over or under report the actual number of pages, however it is expected
-    /// that if this return `Ok(Some(5))`, then _you could_ call `get` with an
-    /// index with the range of `0..5`.
-
-    // TODO: Maybe I should remove the io::Result<...> part. If an implementation
-    // tries to calculate their `len_hint` and fails to do so, it should just
-    // return `None`.
-    fn len_hint(&self) -> io::Result<Option<u32>> {
-        Ok(None)
+    /// that if this return `Some(5)`, then _you could_ call `get` with an index
+    /// with the range of `0..5`.
+    fn len_hint(&self) -> Option<u32> {
+        None
     }
 
     /// Validates if the range from `0..self.len_hint()` is valid.
     ///
     /// If `len_hint` is `None`, then this method gonna call [`get`] on a loop;
     /// if [`io::ErrorKind::NotFound`] is returned from one of those calls, then
-    /// this will return Ok(()); any other error would return a tuple of the
-    /// `index` of the page that wasn't valid, and their respective `io::Error`.
+    /// this will return Ok(u32), where `u32` is the number of pages that are
+    /// valid; any other error would return a tuple of the `index` of the page
+    /// that wasn't valid, and their respective `io::Error`.
     ///
     /// The reasoning of this method (instead of forcing everyone to manually
     /// use `len_hint` themselves) is because the definition of a "valid" file
@@ -88,36 +88,32 @@ pub trait Pager {
     ///
     /// # Implementation notes
     ///
-    /// A buggy implementation of [`get`], could of course flag an index as
-    /// "invalid" when it just doesn't exists (`NotFound`). On those cases, it
-    /// is important to note that the range of (0..return.0) should **always**
-    /// be valid.
+    /// A buggy implementation of [`get`] could flag an index as "invalid" when
+    /// it just doesn't exists (`NotFound`). On those cases, it is important to
+    /// note that the range of (0..tuple.0) should **always** be valid.
     ///
     /// Also, if `len_hint` is `Some`, this method could also return `NotFound`;
     /// that would mean that `len_hint` over reported the amount of pages.
     ///
     /// [`get`]: Self::get
-
-    // TODO: This probably should return core::result::Result<u32, (u32, io::Error)>
-    // (or even (u32, io::Error) to accommodate the case where `len_hint` is `None`.
-    fn validate(&self) -> core::result::Result<(), (u32, io::Error)> {
-        let len_hint = self.len_hint().map_err(|err| (0, err))?;
-
-        match len_hint {
-            Some(len) => (0..len).try_for_each(|index| {
-                self.get(index).map(|_| ()).map_err(|error| (index, error))
-            })?,
-            #[rustfmt::skip]
-            None => { for idx in 0.. {
-                match self.get(idx) {
-                    Ok(_) => (),
-                    Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
-                    Err(err) => return Err((idx, err)),
+    fn validate(&self) -> result::Result<u32, (u32, io::Error)> {
+        match self.len_hint() {
+            Some(len) => {
+                for idx in 0..len {
+                    self.get(idx).map_err(|err| (idx, err))?;
                 }
-            } },
+                Ok(len)
+            }
+            None => {
+                let mut idx = 0;
+                #[rustfmt::skip]
+                loop { match self.get(idx) {
+                    Ok(_) => (),
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(idx),
+                    Err(err) => return Err((idx, err)),
+                }; idx += 1; };
+            }
         }
-
-        Ok(())
     }
 }
 
@@ -143,7 +139,7 @@ pub trait PagerMut: Pager {
     /// provided `index`.
     fn get_mut(&mut self, index: u32) -> io::Result<impl DerefMut<Target = [u8; PAGE_SIZE]>>;
 
-    // TODO: The design of this is currently, not really clear...
+    // TODO: The design of this is currently not really clear...
     //
     // fn append(&mut self, bytes: [u8; PAGE_SIZE]) -> io::Result<()>;
 
