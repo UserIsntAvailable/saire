@@ -10,12 +10,10 @@ pub mod pager;
 
 use crate::block::PAGE_SIZE;
 use core::{
-    ops::{Deref, DerefMut},
+    borrow::{Borrow, BorrowMut},
     result,
 };
 // NIGHTLY(core_io_error): https://github.com/rust-lang/rust/pull/116685.
-//
-// I'm gonna claim it if nobody does it...
 use std::io;
 
 /// An `u32` where the value of `0` is represented as `None`.
@@ -43,13 +41,7 @@ type U32 = Option<core::num::NonZeroU32>;
 /// See the [module documentation][crate::vfs] for details on how the SAI file
 /// format its implemented.
 pub trait Pager {
-    // TODO: Is this necessary?
-    //
-    // Would changing `Target = [u8; PAGE_SIZE]` to `Target = Self::Page` make
-    // this trait more ergonomic to use? My gut feeling says that it probably
-    // doesn't matter.
-    //
-    // type Page;
+    type Page: Borrow<[u8; PAGE_SIZE]>;
 
     /// Returns the memory backed by the virtual page at the provided `index`.
     ///
@@ -59,7 +51,7 @@ pub trait Pager {
     /// [`io::ErrorKind::NotFound`]. See [`validate`] for more details.
     ///
     /// [`validate`]: Self::validate
-    fn get(&self, index: u32) -> io::Result<impl Deref<Target = [u8; PAGE_SIZE]>>;
+    fn get(&self, index: u32) -> io::Result<Self::Page>;
 
     /// Returns a hint of the amount of pages that this pager has.
     ///
@@ -135,9 +127,11 @@ pub trait Pager {
 /// [`remove`]: Self::remove
 /// [`PermissionDenied`]: io::ErrorKind::PermissionDenied
 pub trait PagerMut: Pager {
+    type PageMut: BorrowMut<[u8; PAGE_SIZE]>;
+
     /// Provides mutable access to the memory backed by the virtual page at the
     /// provided `index`.
-    fn get_mut(&mut self, index: u32) -> io::Result<impl DerefMut<Target = [u8; PAGE_SIZE]>>;
+    fn get_mut(&mut self, index: u32) -> io::Result<Self::PageMut>;
 
     // TODO: The design of this is currently not really clear...
     //
@@ -148,5 +142,5 @@ pub trait PagerMut: Pager {
 }
 
 pub struct VirtualFileSystem<Pager> {
-    inner: Pager,
+    pager: Pager,
 }

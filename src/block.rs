@@ -11,6 +11,7 @@
 //! Every other block that is not a `TableBlock` is a [`DataBlock`].
 
 use core::{
+    borrow::Borrow,
     ffi::{c_uchar, CStr},
     fmt, mem,
     ops::Deref,
@@ -70,7 +71,19 @@ block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
 /// bytes, instead of their usual copy semantics.
 #[repr(C, /* PERF: align(4096) */)]
 #[derive(Clone, Debug)]
-pub struct VirtualPage([u8; PAGE_SIZE]);
+pub struct VirtualPage(pub(crate) [u8; PAGE_SIZE]);
+
+impl Borrow<[u8; PAGE_SIZE]> for VirtualPage {
+    fn borrow(&self) -> &[u8; PAGE_SIZE] {
+        self
+    }
+}
+
+impl Borrow<[u8; PAGE_SIZE]> for &'_ VirtualPage {
+    fn borrow(&self) -> &[u8; PAGE_SIZE] {
+        self
+    }
+}
 
 impl Deref for VirtualPage {
     type Target = [u8; PAGE_SIZE];
@@ -223,7 +236,7 @@ pub struct FatEntry {
     next_block: u32, // TODO: Option<NonZeroU32>.
     size: u32,
     filetime: u64, // Windows FILETIME
-    _unknown: u64,  // Gets send as a window message.
+    _unknown: u64, // Gets send as a window message.
 }
 
 impl FatEntry {
