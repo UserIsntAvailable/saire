@@ -10,6 +10,7 @@
 //! containing meta-data about the block itself and the 511 blocks after it.
 //! Every other block that is not a `TableBlock` is a [`DataBlock`].
 
+use self::safe_transmute::SafeTransmute;
 use core::{
     ffi::{c_uchar, CStr},
     fmt, mem,
@@ -28,11 +29,11 @@ pub const PAGE_SIZE: usize = 4096;
 /// See the [module documentation][crate::block] for details.
 pub const BLOCKS_PER_SECTOR: usize = 512;
 
-macro_rules! block_partial_impl {
+macro_rules! block_impl {
     ($block_ty:ty => $alias:ident = [$entry_ty:ty]) => {
         type $alias = [$entry_ty; {
             let ty_size = mem::size_of::<$entry_ty>();
-            assert!(PAGE_SIZE % ty_size == 0);
+            debug_assert!(PAGE_SIZE % ty_size == 0);
             PAGE_SIZE / ty_size
         }];
 
@@ -40,15 +41,7 @@ macro_rules! block_partial_impl {
             /// Converts this block back to a `VirtualPage`.
             #[inline]
             pub fn into_virtual_page(self) -> VirtualPage {
-                // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-                //
-                // Both Src and Dst are not pointers types (such as raw pointers, references,
-                // boxes…), so their alignment is not a concern, because transmute is a by-value
-                // operation; the compiler ensures that both Src and Dst are properly aligned.
-                //
-                // Furthermore, because integers are plain old data types, you can always transmute
-                // to them, although keep in mind that FIX: byte order would be platform dependant.
-                unsafe { mem::transmute(self) }
+                self.safe_transmute()
             }
         }
 
@@ -61,8 +54,8 @@ macro_rules! block_partial_impl {
     };
 }
 
-block_partial_impl!(TableBlock => TableEntryArray = [TableEntry]);
-block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
+block_impl! { TableBlock => TableEntryArray = [TableEntry] }
+block_impl! { DataBlock  => FatEntryArray   = [FatEntry]   }
 
 /// A contiguous stream of bytes that may or not be encrypted.
 ///
@@ -72,28 +65,6 @@ block_partial_impl!(DataBlock => FatEntryArray = [FatEntry]);
 #[derive(Clone, Debug)]
 pub struct VirtualPage([u8; PAGE_SIZE]);
 
-impl VirtualPage {
-    fn into_u32_array(self) -> [u32; 1024] {
-        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-        //
-        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
-        // so their alignment is not a concern, because transmute is a by-value operation; the
-        // compiler ensures that both Src and Dst are properly aligned.
-        //
-        // Furthermore, because integers are plain old data types, you can always transmute to
-        // them, although keep in mind that FIX: byte order would be platform dependant.
-        unsafe { mem::transmute(self) }
-    }
-}
-
-impl Deref for VirtualPage {
-    type Target = [u8; PAGE_SIZE];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl AsRef<[u8]> for VirtualPage {
     fn as_ref(&self) -> &[u8] {
         &self.0
@@ -102,6 +73,14 @@ impl AsRef<[u8]> for VirtualPage {
 
 impl AsRef<[u8; PAGE_SIZE]> for VirtualPage {
     fn as_ref(&self) -> &[u8; PAGE_SIZE] {
+        &self.0
+    }
+}
+
+impl Deref for VirtualPage {
+    type Target = [u8; PAGE_SIZE];
+
+    fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
@@ -172,7 +151,7 @@ pub struct TableBlock(TableEntryArray);
 impl TableBlock {
     /// Decrypts the contents of a `TableBlock`.
     ///
-    /// The method only checks if the checksum of this block matches; the data
+    /// This only checks if the checksum of this block is valid; the data
     /// contained within this block might still be invalid.
     ///
     /// # Error
@@ -184,7 +163,7 @@ impl TableBlock {
         B: Into<VirtualPage>,
     {
         fn inner(page: VirtualPage, index: u32) -> Result<TableBlock> {
-            let mut data = page.into_u32_array();
+            let mut data: [u32; 1024] = page.safe_transmute();
 
             data.iter_mut().fold(index, |prev, curr| {
                 let key = prev ^ *curr ^ mask(prev);
@@ -202,34 +181,25 @@ impl TableBlock {
             };
 
             data[0] = actual_checksum;
-            // SAFETY: See `into_u32_array` safety comment.
-            Ok(unsafe { mem::transmute(data) })
+            Ok(data.safe_transmute())
         }
 
         inner(bytes.into(), index)
     }
 
     /// Encrypts the contents of this `TableBlock`.
-    // TODO: I can't seriously believe that you are forced to keep track of the
-    // index to be able to encrypt a `TableBlock`.
+
+    // NOTE(rev-eng): I can't seriously believe that you are forced to keep
+    // track of the index to be able to encrypt a `TableBlock`.
     pub fn encrypt(self, index: u32) -> VirtualPage {
-        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-        //
-        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
-        // so their alignment is not a concern, because transmute is a by-value operation; the
-        // compiler ensures that both Src and Dst are properly aligned.
-        //
-        // Furthermore, because integers are plain old data types, you can always transmute to
-        // them, although keep in mind that FIX: byte order would be platform dependant.
-        let mut data: [u32; 1024] = unsafe { mem::transmute(self) };
+        let mut data: [u32; 1024] = self.safe_transmute();
 
         data.iter_mut().fold(index, |prev, curr| {
             *curr = prev ^ curr.rotate_left(16) ^ mask(prev);
             *curr
         });
 
-        // SAFETY: See safety comment above.
-        unsafe { mem::transmute(data) }
+        data.safe_transmute()
     }
 }
 
@@ -360,7 +330,7 @@ pub struct DataBlock(FatEntryArray);
 impl DataBlock {
     /// Decrypts the contents of a `DataBlock`.
     ///
-    /// The method only checks if the checksum of this block matches; the data
+    /// This only checks if the checksum of this block is valid; the data
     /// contained within this block might still be invalid.
     ///
     /// # Error
@@ -372,7 +342,7 @@ impl DataBlock {
         B: Into<VirtualPage>,
     {
         fn inner(page: VirtualPage, checksum: u32) -> Result<DataBlock> {
-            let mut data = page.into_u32_array();
+            let mut data: [u32; 1024] = page.safe_transmute();
 
             data.iter_mut().fold(checksum, |prev, curr| {
                 mem::replace(curr, curr.wrapping_sub(prev ^ mask(prev)))
@@ -387,8 +357,7 @@ impl DataBlock {
                 });
             };
 
-            // SAFETY: See `into_u32_array` safety comment.
-            Ok(unsafe { mem::transmute(data) })
+            Ok(data.safe_transmute())
         }
 
         inner(bytes.into(), checksum)
@@ -401,15 +370,7 @@ impl DataBlock {
     /// `checksum` from the appropriate `TableBlock` entry, then it would wise to
     /// pass `None`, to not risk encrypting the block with a bad one.
     pub fn encrypt(self, checksum: Option<u32>) -> VirtualPage {
-        // SAFETY: Both Src and Dst are valid types, which doesn't have any padding.
-        //
-        // Both Src and Dst are not pointers types (such as raw pointers, references, boxes…),
-        // so their alignment is not a concern, because transmute is a by-value operation; the
-        // compiler ensures that both Src and Dst are properly aligned.
-        //
-        // Furthermore, because integers are plain old data types, you can always transmute to
-        // them, although keep in mind that FIX: byte order would be platform dependant.
-        let mut data: [u32; 1024] = unsafe { mem::transmute(self) };
+        let mut data: [u32; 1024] = self.safe_transmute();
         let checksum = checksum.unwrap_or_else(|| self::checksum(&data));
 
         data.iter_mut().fold(checksum, |prev, curr| {
@@ -417,8 +378,7 @@ impl DataBlock {
             *curr
         });
 
-        // SAFETY: See safety comment above.
-        unsafe { mem::transmute(data) }
+        data.safe_transmute()
     }
 }
 
@@ -429,9 +389,9 @@ fn checksum(block: &[u32; 1024]) -> u32 {
 
 #[inline]
 fn mask(value: u32) -> u32 {
-    (0..=24).step_by(8).fold(0, |sum, index| {
-        let index = (value >> index) & 0xFF;
-        sum.wrapping_add(USER[index as usize])
+    (0..=24).step_by(8).fold(0, |sum, idx| {
+        let idx = (value >> idx) & 0xFF;
+        sum.wrapping_add(USER[idx as usize])
     })
 }
 
@@ -470,6 +430,105 @@ const USER: [u32; 256] = [
     0xB3745532, 0x53C1A272, 0x469DFCDF, 0xE897BF7D, 0xA6BBE2AE, 0x68CE38AF, 0x5D783D0B, 0x524F21E4,
     0x4A257B31, 0xCE7A07B2, 0x562CE045, 0x33B708A4, 0x8CEE8AEF, 0xC8FB71FF, 0x74E52FAB, 0xCDB18796,
 ];
+
+/// Provides [`SafeTransmute`] to be able to transmute between types when it is
+/// statically known that they are compatible.
+
+// TODO(Unavailable): This seems to be the only place where `transmute` is
+// currently used (mostly for convenience, instead of performance). Move this to
+// a `common/internal/utils` module if it deemed useful outside of here.
+mod safe_transmute {
+    use super::*;
+
+    // FIXME(Unavailable): These 2 would present different runtime behaviour
+    // iff, `Src` and `Dst` are not of even size. I don't think there is a way
+    // to solve this (other than stabilizing `transmute_unchecked`), so my "fix"
+    // for now is to use `SafeTransmute` trait + `pod_safe_transmute_impl!` to
+    // prevent misuse.
+    #[cfg(target_endian = "little")]
+    use mem::transmute as le_transmute;
+    #[cfg(target_endian = "big")]
+    unsafe fn le_transmute<Src, Dst>(src: Src) -> Dst {
+        let mut src = src;
+        let src = &mut src as *mut Src as *mut u8;
+
+        let size = mem::size_of::<Dst>() as isize;
+        if size != 0 {
+            (0..size - 1).for_each(|idx| {
+                let p1 = unsafe { src.offset(idx + 0) };
+                let p2 = unsafe { src.offset(idx + 1) };
+                unsafe { core::ptr::swap(p1, p2) };
+            });
+        }
+
+        // NIGHTLY: can `transmute_unchecked` be stabilized?
+        // for now I'm gonna use poor's man `transmute_unchecked`...
+        unsafe { core::ptr::read_unaligned(src as *const Dst) }
+    }
+
+    /// Lets you interpret the bits of a value of one type as another type,
+    /// safely.
+    ///
+    /// # Safety
+    ///
+    /// On top of the requirements of [`mem::transmute`], [`safe_transmute`]
+    /// needs to be able to interpret the `src` as `dst` the same **no matter
+    /// the target endianness**.
+    ///
+    /// [`safe_transmute`]: [`Self::safe_transmute`]
+    pub unsafe trait SafeTransmute<Dst>
+    where
+        Self: Sized,
+    {
+        /// Reinterprets the bits of a value of one type as another type, safely.
+
+        // NIGHTLY: with `transmute_unchecked` I would be able to provide a
+        // blanket implementation for this.
+        fn safe_transmute(self) -> Dst;
+    }
+
+    macro_rules! pod_safe_transmute_impl {
+        ($Src:ty = $Dst:ty) => {
+            const _: () = debug_assert!(mem::size_of::<$Src>() % 2 == 0);
+            const _: () = debug_assert!(mem::size_of::<$Src>() == mem::size_of::<$Dst>());
+
+            // SAFETY: Both Src and Dst are valid types, which doesn't have any
+            // padding.
+            //
+            // Both Src and Dst are not pointers types (such as raw pointers,
+            // references, boxes…), so their alignment is not a concern,
+            // because transmute is a by-value operation; the compiler ensures
+            // that both Src and Dst are properly aligned.
+            //
+            // Furthermore, because integers (or array/structs that **only**
+            // contains them) are plain old data types, you can always transmute
+            // to them.
+            unsafe impl SafeTransmute<$Dst> for $Src {
+                fn safe_transmute(self) -> $Dst {
+                    // SAFETY: trait contract
+                    unsafe { le_transmute(self) }
+                }
+            }
+
+            // SAFETY: Same as above
+            unsafe impl SafeTransmute<$Src> for $Dst {
+                fn safe_transmute(self) -> $Src {
+                    // SAFETY: trait contract
+                    unsafe { le_transmute(self) }
+                }
+            }
+        };
+    }
+
+    pod_safe_transmute_impl! { VirtualPage     = [u32; 1024] }
+    pod_safe_transmute_impl! { TableBlock      = [u32; 1024] }
+    pod_safe_transmute_impl! { TableEntryArray = [u32; 1024] }
+    pod_safe_transmute_impl! { DataBlock       = [u32; 1024] }
+    pod_safe_transmute_impl! { FatEntryArray   = [u32; 1024] }
+
+    pod_safe_transmute_impl! { TableBlock      = VirtualPage }
+    pod_safe_transmute_impl! { DataBlock       = VirtualPage }
+}
 
 #[cfg(test)]
 mod tests {
