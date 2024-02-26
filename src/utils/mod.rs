@@ -2,12 +2,17 @@ pub mod pixel_ops;
 
 #[cfg(feature = "png")]
 pub(crate) mod image {
-    use png::{BitDepth, ColorType, Encoder};
+    use png::{BitDepth, Encoder};
     use std::{fs, io, path::Path};
+
+    pub enum ColorType {
+        Rgba,
+        #[allow(dead_code)]
+        Grayscale,
+    }
 
     /// New type to create 8bpc images.
     pub struct PngImage {
-        // TODO(Unavailable): Own `ColorType` type.
         pub color: ColorType,
         pub width: u32,
         pub height: u32,
@@ -23,7 +28,10 @@ pub(crate) mod image {
             let file = fs::File::create(path)?;
 
             let mut encoder = Encoder::new(file, self.width, self.height);
-            encoder.set_color(self.color);
+            encoder.set_color(match self.color {
+                ColorType::Rgba => png::ColorType::Rgba,
+                ColorType::Grayscale => png::ColorType::Grayscale,
+            });
             encoder.set_depth(BitDepth::Eight);
 
             Ok(encoder.write_header()?.write_image_data(bytes)?)
@@ -44,15 +52,15 @@ pub(crate) mod image {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    /// Gets the bytes from a file from the ".resources" folder.
+    /// Gets the bytes from a file from the "/res" folder.
     macro_rules! resource {
         ($file:literal) => {
-            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/.resources/", $file))
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/res/", $file))
         };
     }
 
-    /// `sample.sai` bytes.
-    pub const SAMPLE: &[u8] = resource!("sample.sai");
+    /// `toobig.sai` bytes.
+    pub const SAMPLE: &[u8] = resource!("toobig.sai");
 
     pub(crate) use resource;
 }
