@@ -3,7 +3,7 @@
 // the file format, I will work it latter on.
 
 use super::FileSystemReader;
-use crate::block::{FatEntry, FatKind};
+use crate::cipher::{FatEntry, FatKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraverseEvent {
@@ -83,7 +83,7 @@ fn traverse_data(
 mod tests {
     use super::*;
     use crate::{
-        block::{FatEntry, FatKind},
+        cipher::{FatEntry, FatKind},
         utils::tests::SAMPLE as BYTES,
     };
     use eyre::Result;

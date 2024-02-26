@@ -152,12 +152,10 @@ pub struct IntoIter {
     iter: iter::Enumerate<MapIntoIter<u32, LayerRef>>,
 }
 
-impl IntoIter {
-    fn to_index_layer_ref_pair(
-        (index, (_key, value)): (usize, (u32, LayerRef)),
-    ) -> (usize, LayerRef) {
-        (index, value)
-    }
+fn into_index_layer_ref_pair(
+    (index, (_key, value)): (usize, (u32, LayerRef)),
+) -> (usize, LayerRef) {
+    (index, value)
 }
 
 impl Iterator for IntoIter {
@@ -165,19 +163,19 @@ impl Iterator for IntoIter {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(Self::to_index_layer_ref_pair)
+        self.iter.next().map(into_index_layer_ref_pair)
     }
 }
 
 impl DoubleEndedIterator for IntoIter {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.iter.next_back().map(Self::to_index_layer_ref_pair)
+        self.iter.next_back().map(into_index_layer_ref_pair)
     }
 
     #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        self.iter.nth_back(n).map(Self::to_index_layer_ref_pair)
+        self.iter.nth_back(n).map(into_index_layer_ref_pair)
     }
 }
 

@@ -8,7 +8,7 @@
 pub mod entry;
 pub mod pager;
 
-use crate::block::PAGE_SIZE;
+use crate::cipher::PAGE_SIZE;
 use core::{
     borrow::{Borrow, BorrowMut},
     result,
