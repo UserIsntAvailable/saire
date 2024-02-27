@@ -1,12 +1,21 @@
 //! DOCS:
 //!
-//! See the [cipher's module documentation][crate::cipher] for details on virtual
-//! page decryption/encryption.
+//! Once a PaintoolSAI file is decrypted, it will expose a file system like
+//! structure (VFS) which then could be used to find/query information for
+//! selected files. The structure of the file system would solely depend in what
+//! extension the file terminates. For the purpose of this document, I will only
+//! explain how `.sai` works.
+//!
+//! # `.sai` File System (SAIFS)
+//!
+//! DOCS:
+//!
+//! See the [cipher's module documentation][crate::cipher] for details on how sai
+//! blocks are decrypted/encrypted.
 
+pub mod driver;
 pub mod entry;
-pub mod pager;
 
-use crate::cipher::PAGE_SIZE;
 use core::{
     borrow::{Borrow, BorrowMut},
     ops, result,
@@ -20,30 +29,27 @@ use std::io;
 // NIGHTLY: Pattern types.
 type U32 = Option<core::num::NonZeroU32>;
 
-// TODO(Unavailable): Rename `Pager` to `Driver`.
+const BLOCK_SIZE: usize = crate::cipher::PAGE_SIZE;
 
-/// A file system virtual page retriever (pager) trait to be used together with
-/// `VirtualFileSystem`.
+/// DOCS:
 ///
-/// A `VirtualFileSystem` (vfs for short) is just a wrapper type that calls
-/// methods by types implementing this trait. Multiple implementations are
-/// necessary, because the requirements of data retrieval or data caching are
-/// very different depending on the situation.
+/// This trait is provided to allow [`VirtualFileSystem`] to be generic over the
+/// underlying file system mechanism. Particularly, types implementing this
+/// trait work at a [`Block`] level, rather than using file handles. It is then
+/// _recommended_ to not use this API directly, and instead use the higher level
+/// API that `VFS` provides.
 ///
-/// For normal use of the library one could imagine that every page could be
-/// simply saved on a `HashMap`, however 1) this needs the `alloc` crate which a
-/// `no_std` target might not want to have or 2) this is not as memory efficient
-/// as just modifying an in-memory buffer (i.e memmap bytes). As such, the crate
-/// provides default implementations (found at [`pager`]) that would be good
-/// enough for 99% of most cases; if you are in that 1%, then you can implement
-/// the trait for your own type.
+/// See the [module documentation][crate::vfs] for details on how PaintoolSAI's
+/// file system is structured.
 ///
-/// See the [module documentation][crate::vfs] for details on how the SAI file
-/// format its implemented.
-pub trait Pager {
-    type Page: Borrow<[u8; PAGE_SIZE]>;
+/// [`Block`]: [`Self::Block`]
 
-    /// Returns the memory backed by the virtual page at the provided `index`.
+// TODO(Unavailable): <const BLOCK_SIZE: usize = 4096>
+pub trait Driver {
+    /// DOCS:
+    type Block: Borrow<[u8; BLOCK_SIZE]>;
+
+    /// Returns the memory backed by the block at the provided `index`.
     ///
     /// # Implementation notes
     ///
@@ -51,14 +57,14 @@ pub trait Pager {
     /// [`io::ErrorKind::NotFound`]. See [`validate`] for more details.
     ///
     /// [`validate`]: Self::validate
-    fn get(&self, index: u32) -> io::Result<Self::Page>;
+    fn get(&self, index: u32) -> io::Result<Self::Block>;
 
-    /// Returns a hint of the amount of pages that this pager has.
+    /// Returns a hint of the amount of blocks this file system driver has.
     ///
-    /// You shouldn't rely on the output of this method for correctness; it could
-    /// over or under report the actual number of pages, however it is expected
-    /// that if this return `Some(5)`, then _you could_ call `get` with an index
-    /// with the range of `0..5`.
+    /// You shouldn't rely on the output of this method for correctness; it
+    /// could over or under report the actual number of blocks, however it is
+    /// expected that if this return `Some(5)`, then _you could_ call `get` with
+    /// an index within the range of `0..5`.
     fn len_hint(&self) -> Option<u32> {
         None
     }
@@ -67,15 +73,15 @@ pub trait Pager {
     ///
     /// If `len_hint` is `None`, then this method gonna call [`get`] on a loop;
     /// if [`io::ErrorKind::NotFound`] is returned from one of those calls, then
-    /// this will return Ok(u32), where `u32` is the number of pages that are
-    /// valid; any other error would return a tuple of the `index` of the page
-    /// that wasn't valid, and their respective `io::Error`.
+    /// this will return Ok(u32), where `u32` is the number of blocks that are
+    /// valid; any other error would return a tuple of the `index` of the block
+    /// that wasn't valid, and the reason of the error.
     ///
     /// The reasoning of this method (instead of forcing everyone to manually
-    /// use `len_hint` themselves) is because the definition of a "valid" pager
-    /// depends on the implementation. As such, this only guarantees that there
-    /// are not corrupted pages within this pager, but other implementations
-    /// might enforce higher requirements (e.g specific pages are available).
+    /// use `len_hint` themselves) is because the definition of a "valid" file
+    /// system depends on the implementation. As such, this only guarantees that
+    /// there are not corrupted pages within this driver, but other impls might
+    /// enforce higher requirements (e.g specific blocks are available).
     ///
     /// # Implementation notes
     ///
@@ -84,7 +90,7 @@ pub trait Pager {
     /// note that the range of (0..tuple.0) should **always** be valid.
     ///
     /// Also, if `len_hint` is `Some`, this method could also return `NotFound`;
-    /// that would mean that `len_hint` over reported the amount of pages.
+    /// that would mean that `len_hint` over reported the amount of blocks.
     ///
     /// [`get`]: Self::get
     fn validate(&self) -> result::Result<u32, (u32, io::Error)> {
@@ -108,39 +114,40 @@ pub trait Pager {
     }
 }
 
-/// Same as [`Pager`], but provides mutable access to the underlaying page
-/// memory.
+/// Same as [`Driver`], but provides mutable access to the underlying block
+/// buffer.
 ///
-/// This type is meant to **only** be implemented for types that can synchronize
-/// changes to their underlaying buffer. Meaning if someone calls [`get_mut`],
-/// and modifies the returned page, then the next time they call `get/mut` those
+/// This trait is meant to **only** be implemented for types that can synchronize
+/// changes to the underlying block buffer. Meaning if someone calls [`get_mut`],
+/// and modifies the returned page, then the next time they call any method those
 /// changes **can be observed**.
 ///
 /// # Implementation notes
 ///
 /// For correctness concerts, an implementation might return [`PermissionDenied`]
 /// when calling [`get_mut`] or [`remove`] for specific indexes to prevent users
-/// from leaving the pager on an invalid state after making modifications.
+/// from leaving the driver on an invalid state after making modifications.
 ///
 /// [`get_mut`]: Self::get_mut
 /// [`remove`]: Self::remove
 /// [`PermissionDenied`]: io::ErrorKind::PermissionDenied
-pub trait PagerMut: Pager {
-    type PageMut: BorrowMut<[u8; PAGE_SIZE]>;
+pub trait DriverMut: Driver {
+    /// DOCS:
+    type BlockMut: BorrowMut<[u8; BLOCK_SIZE]>;
 
-    /// Provides mutable access to the memory backed by the virtual page at the
-    /// provided `index`.
-    fn get_mut(&mut self, index: u32) -> io::Result<Self::PageMut>;
+    /// Provides mutable access to the block at the provided `index`.
+    fn get_mut(&mut self, index: u32) -> io::Result<Self::BlockMut>;
 
     // TODO: The design of this is currently not really clear...
     //
     // fn append(&mut self, bytes: [u8; PAGE_SIZE]) -> io::Result<()>;
 
-    /// Removes the expecifed `range` of pages.
+    /// Removes the specified `range` of blocks.
     fn remove(&mut self, range: ops::Bound<u32>) -> io::Result<()>;
 }
 
+/// DOCS:
 #[derive(Debug)]
-pub struct VirtualFileSystem<Pager> {
-    pager: Pager,
+pub struct VirtualFileSystem<Driver> {
+    _driver: Driver,
 }
