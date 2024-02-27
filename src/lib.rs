@@ -5,13 +5,16 @@
     clippy::must_use_candidate,
     clippy::unreadable_literal
 )]
+#![feature(adt_const_params)]
 
+pub mod cipher;
+pub mod cipher_;
 pub mod doc;
 pub mod utils;
 pub mod vfs;
 
-pub(crate) mod cipher;
-pub(crate) mod fs;
+mod fs;
+mod polyfill;
 
 pub use doc::{Error, FormatError, Result, SaiDocument};
 

@@ -1,0 +1,293 @@
+//! Macros for defining various block sizes implementations.
+
+use super::{traits::*, FatEntry, TableEntry};
+use core::mem;
+
+// better to write the macro this way; it uses more horizontal space, instead
+// of vertical space (e.g one macro for each data type length).
+macro_rules! impl_supported_block_size {
+    (F T => $size:literal) => {
+        unsafe impl SupportedBlockSize<FatEntry> for BlockSize<$size> {
+            type Array = [FatEntry; $size / mem::size_of::<FatEntry>()];
+        }
+
+        unsafe impl SupportedDataBlockSize for BlockSize<$size> {}
+
+        impl_supported_block_size! { T => $size }
+    };
+    (T => $size:literal) => {
+        unsafe impl SupportedBlockSize<TableEntry> for BlockSize<$size> {
+            type Array = [TableEntry; $size / mem::size_of::<TableEntry>()];
+        }
+
+        unsafe impl SupportedTableBlockSize for BlockSize<$size> {}
+
+        impl_supported_block_size! { => $size }
+    };
+    (=> $size:literal) => {
+        unsafe impl SupportedBlockSize for BlockSize<$size> {
+            type Array = [u8; $size];
+        }
+    };
+}
+
+impl_supported_block_size! { F T =>    0 }
+impl_supported_block_size! {     =>    4 }
+impl_supported_block_size! {   T =>    8 }
+impl_supported_block_size! {     =>   12 }
+impl_supported_block_size! {   T =>   16 }
+impl_supported_block_size! {     =>   20 }
+impl_supported_block_size! {   T =>   24 }
+impl_supported_block_size! {     =>   28 }
+impl_supported_block_size! {   T =>   32 }
+impl_supported_block_size! {     =>   36 }
+impl_supported_block_size! {   T =>   40 }
+impl_supported_block_size! {     =>   44 }
+impl_supported_block_size! {   T =>   48 }
+impl_supported_block_size! {     =>   52 }
+impl_supported_block_size! {   T =>   56 }
+impl_supported_block_size! {     =>   60 }
+impl_supported_block_size! { F T =>   64 }
+impl_supported_block_size! {     =>   68 }
+impl_supported_block_size! {   T =>   72 }
+impl_supported_block_size! {     =>   76 }
+impl_supported_block_size! {   T =>   80 }
+impl_supported_block_size! {     =>   84 }
+impl_supported_block_size! {   T =>   88 }
+impl_supported_block_size! {     =>   92 }
+impl_supported_block_size! {   T =>   96 }
+impl_supported_block_size! {     =>  100 }
+impl_supported_block_size! {   T =>  104 }
+impl_supported_block_size! {     =>  108 }
+impl_supported_block_size! {   T =>  112 }
+impl_supported_block_size! {     =>  116 }
+impl_supported_block_size! {   T =>  120 }
+impl_supported_block_size! {     =>  124 }
+impl_supported_block_size! { F T =>  128 }
+impl_supported_block_size! {     =>  132 }
+impl_supported_block_size! {   T =>  136 }
+impl_supported_block_size! {     =>  140 }
+impl_supported_block_size! {   T =>  144 }
+impl_supported_block_size! {     =>  148 }
+impl_supported_block_size! {   T =>  152 }
+impl_supported_block_size! {     =>  156 }
+impl_supported_block_size! {   T =>  160 }
+impl_supported_block_size! {     =>  164 }
+impl_supported_block_size! {   T =>  168 }
+impl_supported_block_size! {     =>  172 }
+impl_supported_block_size! {   T =>  176 }
+impl_supported_block_size! {     =>  180 }
+impl_supported_block_size! {   T =>  184 }
+impl_supported_block_size! {     =>  188 }
+impl_supported_block_size! { F T =>  192 }
+impl_supported_block_size! {     =>  196 }
+impl_supported_block_size! {   T =>  200 }
+impl_supported_block_size! {     =>  204 }
+impl_supported_block_size! {   T =>  208 }
+impl_supported_block_size! {     =>  212 }
+impl_supported_block_size! {   T =>  216 }
+impl_supported_block_size! {     =>  220 }
+impl_supported_block_size! {   T =>  224 }
+impl_supported_block_size! {     =>  228 }
+impl_supported_block_size! {   T =>  232 }
+impl_supported_block_size! {     =>  236 }
+impl_supported_block_size! {   T =>  240 }
+impl_supported_block_size! {     =>  244 }
+impl_supported_block_size! {   T =>  248 }
+impl_supported_block_size! {     =>  252 }
+impl_supported_block_size! { F T =>  256 }
+// impl_supported_block_size!       => 0260 }
+// impl_supported_block_size!   U33 => 0264 }
+// impl_supported_block_size!       => 0268 }
+impl_supported_block_size! {   T =>  272 }
+// impl_supported_block_size!       => 0276 }
+// impl_supported_block_size!   U35 => 0280 }
+// impl_supported_block_size!       => 0284 }
+impl_supported_block_size! {   T =>  288 }
+// impl_supported_block_size!       => 0292 }
+// impl_supported_block_size!   U37 => 0296 }
+// impl_supported_block_size!       => 0300 }
+impl_supported_block_size! {   T =>  304 }
+// impl_supported_block_size!       => 0308 }
+// impl_supported_block_size!   U39 => 0312 }
+// impl_supported_block_size!       => 0316 }
+impl_supported_block_size! { F T =>  320 }
+// impl_supported_block_size!       => 0324 }
+// impl_supported_block_size!   U41 => 0328 }
+// impl_supported_block_size!       => 0332 }
+impl_supported_block_size! {   T =>  336 }
+// impl_supported_block_size!       => 0340 }
+// impl_supported_block_size!   U43 => 0344 }
+// impl_supported_block_size!       => 0348 }
+impl_supported_block_size! {   T =>  352 }
+// impl_supported_block_size!       => 0356 }
+// impl_supported_block_size!   U45 => 0360 }
+// impl_supported_block_size!       => 0364 }
+impl_supported_block_size! {   T =>  368 }
+// impl_supported_block_size!       => 0372 }
+// impl_supported_block_size!   U47 => 0376 }
+// impl_supported_block_size!       => 0380 }
+impl_supported_block_size! { F T =>  384 }
+// impl_supported_block_size!       => 0388 }
+// impl_supported_block_size!   U49 => 0392 }
+// impl_supported_block_size!       => 0396 }
+impl_supported_block_size! {   T =>  400 }
+// impl_supported_block_size!       => 0404 }
+// impl_supported_block_size!   U51 => 0408 }
+// impl_supported_block_size!       => 0412 }
+impl_supported_block_size! {   T =>  416 }
+// impl_supported_block_size!       => 0420 }
+// impl_supported_block_size!   U53 => 0424 }
+// impl_supported_block_size!       => 0428 }
+impl_supported_block_size! {   T =>  432 }
+// impl_supported_block_size!       => 0436 }
+// impl_supported_block_size!   U55 => 0440 }
+// impl_supported_block_size!       => 0444 }
+impl_supported_block_size! { F T =>  448 }
+// impl_supported_block_size!       => 0452 }
+// impl_supported_block_size!   U57 => 0456 }
+// impl_supported_block_size!       => 0460 }
+impl_supported_block_size! {   T =>  464 }
+// impl_supported_block_size!       => 0468 }
+// impl_supported_block_size!   U59 => 0472 }
+// impl_supported_block_size!       => 0476 }
+impl_supported_block_size! {   T =>  480 }
+// impl_supported_block_size!       => 0484 }
+// impl_supported_block_size!   U61 => 0488 }
+// impl_supported_block_size!       => 0492 }
+impl_supported_block_size! {   T =>  496 }
+// impl_supported_block_size!       => 0500 }
+// impl_supported_block_size!   U63 => 0504 }
+// impl_supported_block_size!       => 0508 }
+impl_supported_block_size! { F T =>  512 }
+// impl_supported_block_size!       => 0516 }
+// impl_supported_block_size!   U65 => 0520 }
+// impl_supported_block_size!       => 0524 }
+impl_supported_block_size! {   T =>  528 }
+// impl_supported_block_size!       => 0532 }
+// impl_supported_block_size!   U67 => 0536 }
+// impl_supported_block_size!       => 0540 }
+impl_supported_block_size! {   T =>  544 }
+// impl_supported_block_size!       => 0548 }
+// impl_supported_block_size!   U69 => 0552 }
+// impl_supported_block_size!       => 0556 }
+impl_supported_block_size! {   T =>  560 }
+// impl_supported_block_size!       => 0564 }
+// impl_supported_block_size!   U71 => 0568 }
+// impl_supported_block_size!       => 0572 }
+impl_supported_block_size! { F T =>  576 }
+// impl_supported_block_size!       => 0580 }
+// impl_supported_block_size!   U73 => 0584 }
+// impl_supported_block_size!       => 0588 }
+impl_supported_block_size! {   T =>  592 }
+// impl_supported_block_size!       => 0596 }
+// impl_supported_block_size!   U75 => 0600 }
+// impl_supported_block_size!       => 0604 }
+impl_supported_block_size! {   T =>  608 }
+// impl_supported_block_size!       => 0612 }
+// impl_supported_block_size!   U77 => 0616 }
+// impl_supported_block_size!       => 0620 }
+impl_supported_block_size! {   T =>  624 }
+// impl_supported_block_size!       => 0628 }
+// impl_supported_block_size!   U79 => 0632 }
+// impl_supported_block_size!       => 0636 }
+impl_supported_block_size! { F T =>  640 }
+// impl_supported_block_size!       => 0644 }
+// impl_supported_block_size!   U81 => 0648 }
+// impl_supported_block_size!       => 0652 }
+impl_supported_block_size! {   T =>  656 }
+// impl_supported_block_size!       => 0660 }
+// impl_supported_block_size!   U83 => 0664 }
+// impl_supported_block_size!       => 0668 }
+impl_supported_block_size! {   T =>  672 }
+// impl_supported_block_size!       => 0676 }
+// impl_supported_block_size!   U85 => 0680 }
+// impl_supported_block_size!       => 0684 }
+impl_supported_block_size! {   T =>  688 }
+// impl_supported_block_size!       => 0692 }
+// impl_supported_block_size!   U87 => 0696 }
+// impl_supported_block_size!       => 0700 }
+impl_supported_block_size! { F T =>  704 }
+// impl_supported_block_size!       => 0708 }
+// impl_supported_block_size!   U89 => 0712 }
+// impl_supported_block_size!       => 0716 }
+impl_supported_block_size! {   T =>  720 }
+// impl_supported_block_size!       => 0724 }
+// impl_supported_block_size!   U91 => 0728 }
+// impl_supported_block_size!       => 0732 }
+impl_supported_block_size! {   T =>  736 }
+// impl_supported_block_size!       => 0740 }
+// impl_supported_block_size!   U93 => 0744 }
+// impl_supported_block_size!       => 0748 }
+impl_supported_block_size! {   T =>  752 }
+// impl_supported_block_size!       => 0756 }
+// impl_supported_block_size!   U95 => 0760 }
+// impl_supported_block_size!       => 0764 }
+impl_supported_block_size! { F T =>  768 }
+// impl_supported_block_size!       => 0772 }
+// impl_supported_block_size!   U97 => 0776 }
+// impl_supported_block_size!       => 0780 }
+impl_supported_block_size! {   T =>  784 }
+// impl_supported_block_size!       => 0788 }
+// impl_supported_block_size!   U99 => 0792 }
+// impl_supported_block_size!       => 0796 }
+impl_supported_block_size! {   T =>  800 }
+// impl_supported_block_size!       => 0804 }
+// impl_supported_block_size!   101 => 0808 }
+// impl_supported_block_size!       => 0812 }
+impl_supported_block_size! {   T =>  816 }
+// impl_supported_block_size!       => 0820 }
+// impl_supported_block_size!   103 => 0824 }
+// impl_supported_block_size!       => 0828 }
+impl_supported_block_size! { F T =>  832 }
+// impl_supported_block_size!       => 0836 }
+// impl_supported_block_size!   105 => 0840 }
+// impl_supported_block_size!       => 0844 }
+impl_supported_block_size! {   T =>  848 }
+// impl_supported_block_size!       => 0852 }
+// impl_supported_block_size!   107 => 0856 }
+// impl_supported_block_size!       => 0860 }
+impl_supported_block_size! {   T =>  864 }
+// impl_supported_block_size!       => 0868 }
+// impl_supported_block_size!   109 => 0872 }
+// impl_supported_block_size!       => 0876 }
+impl_supported_block_size! {   T =>  880 }
+// impl_supported_block_size!       => 0884 }
+// impl_supported_block_size!   111 => 0888 }
+// impl_supported_block_size!       => 0892 }
+impl_supported_block_size! { F T =>  896 }
+// impl_supported_block_size!       => 0900 }
+// impl_supported_block_size!   113 => 0904 }
+// impl_supported_block_size!       => 0908 }
+impl_supported_block_size! {   T =>  912 }
+// impl_supported_block_size!       => 0916 }
+// impl_supported_block_size!   115 => 0920 }
+// impl_supported_block_size!       => 0924 }
+impl_supported_block_size! {   T =>  928 }
+// impl_supported_block_size!       => 0932 }
+// impl_supported_block_size!   117 => 0936 }
+// impl_supported_block_size!       => 0940 }
+impl_supported_block_size! {   T =>  944 }
+// impl_supported_block_size!       => 0948 }
+// impl_supported_block_size!   119 => 0952 }
+// impl_supported_block_size!       => 0956 }
+impl_supported_block_size! { F T =>  960 }
+// impl_supported_block_size!       => 0964 }
+// impl_supported_block_size!   121 => 0968 }
+// impl_supported_block_size!       => 0972 }
+impl_supported_block_size! {   T =>  976 }
+// impl_supported_block_size!       => 0980 }
+// impl_supported_block_size!   123 => 0984 }
+// impl_supported_block_size!       => 0988 }
+impl_supported_block_size! {   T =>  992 }
+// impl_supported_block_size!       => 0996 }
+// impl_supported_block_size!   125 => 1000 }
+// impl_supported_block_size!       => 1004 }
+impl_supported_block_size! {   T => 1008 }
+// impl_supported_block_size!       => 1012 }
+// impl_supported_block_size!   127 => 1016 }
+// impl_supported_block_size!       => 1020 }
+impl_supported_block_size! { F T => 1024 }
+impl_supported_block_size! { F T => 2048 }
+impl_supported_block_size! { F T => 4096 }
+impl_supported_block_size! { F T => 8192 }
