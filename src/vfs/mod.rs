@@ -1,8 +1,6 @@
-#![allow(dead_code)]
-
 //! DOCS:
 //!
-//! See the [block's module documentation][crate::block] for details on virtual
+//! See the [cipher's module documentation][crate::cipher] for details on virtual
 //! page decryption/encryption.
 
 pub mod entry;
@@ -11,7 +9,7 @@ pub mod pager;
 use crate::cipher::PAGE_SIZE;
 use core::{
     borrow::{Borrow, BorrowMut},
-    result,
+    ops, result,
 };
 // NIGHTLY(core_io_error): https://github.com/rust-lang/rust/pull/116685.
 use std::io;
@@ -21,6 +19,8 @@ use std::io;
 // TODO: Put this on a common place (lib.rs?).
 // NIGHTLY: Pattern types.
 type U32 = Option<core::num::NonZeroU32>;
+
+// TODO(Unavailable): Rename `Pager` to `Driver`.
 
 /// A file system virtual page retriever (pager) trait to be used together with
 /// `VirtualFileSystem`.
@@ -72,11 +72,10 @@ pub trait Pager {
     /// that wasn't valid, and their respective `io::Error`.
     ///
     /// The reasoning of this method (instead of forcing everyone to manually
-    /// use `len_hint` themselves) is because the definition of a "valid" file
-    /// system depends from implementation to implementation. As such, this only
-    /// guarantees that the are not corrupted pages within this pager, but other
-    /// implementations might enforce higher requirements (e.g specific pages
-    /// are available, etc...).
+    /// use `len_hint` themselves) is because the definition of a "valid" pager
+    /// depends on the implementation. As such, this only guarantees that there
+    /// are not corrupted pages within this pager, but other implementations
+    /// might enforce higher requirements (e.g specific pages are available).
     ///
     /// # Implementation notes
     ///
@@ -138,9 +137,10 @@ pub trait PagerMut: Pager {
     // fn append(&mut self, bytes: [u8; PAGE_SIZE]) -> io::Result<()>;
 
     /// Removes the expecifed `range` of pages.
-    fn remove(&mut self, range: core::ops::Bound<u32>) -> io::Result<()>;
+    fn remove(&mut self, range: ops::Bound<u32>) -> io::Result<()>;
 }
 
+#[derive(Debug)]
 pub struct VirtualFileSystem<Pager> {
     pager: Pager,
 }

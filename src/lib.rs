@@ -8,10 +8,10 @@
 
 pub mod doc;
 pub mod utils;
+pub mod vfs;
 
 pub(crate) mod cipher;
 pub(crate) mod fs;
-pub(crate) mod vfs;
 
 pub use doc::{Error, FormatError, Result, SaiDocument};
 
