@@ -43,23 +43,19 @@ pub enum FormatError {
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use Error as E;
-
         match self {
-            E::IoError(io) => write!(f, "{io}"),
-            E::Format(format) => write!(f, "{format}"),
-            E::Unknown() => write!(f, "Something went wrong while reading the file."),
+            Self::IoError(io) => write!(f, "{io}"),
+            Self::Format(format) => write!(f, "{format}"),
+            Self::Unknown() => write!(f, "Something went wrong while reading the file."),
         }
     }
 }
 
 impl Display for FormatError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use FormatError as E;
-
         match self {
-            E::MissingEntry(entry) => write!(f, "'{entry}' entry is missing."),
-            E::Invalid => write!(f, "Invalid/Corrupted sai file."),
+            Self::MissingEntry(entry) => write!(f, "'{entry}' entry is missing."),
+            Self::Invalid => write!(f, "Invalid/Corrupted sai file."),
         }
     }
 }
@@ -205,12 +201,8 @@ impl Display for SaiDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        canvas::{ResolutionUnit, SizeUnit},
-        layer::LayerKind,
-        Result, SaiDocument,
-    };
-    use crate::{doc::layer::LayerRef, utils::tests::SAMPLE as BYTES};
+    use super::{*, layer::*, canvas::*};
+    use crate::utils::tests::SAMPLE as BYTES;
 
     #[test]
     fn author_works() -> Result<()> {
@@ -251,8 +243,29 @@ mod tests {
         let doc = SaiDocument::from(BYTES);
         let layers = doc.layers_no_decompress()?;
 
-        // FIX: More tests
         assert_eq!(layers.len(), 1);
+
+        let layer = &layers[0];
+
+        assert_eq!(layer.kind, LayerKind::Regular);
+        assert_eq!(layer.id, 2);
+        assert_eq!(layer.bounds.x, -125);
+        assert_eq!(layer.bounds.y, -125);
+        assert_eq!(layer.bounds.width, 2464);
+        assert_eq!(layer.bounds.height, 2496);
+        assert_eq!(layer.opacity, 100);
+        assert_eq!(layer.visible, true);
+        assert_eq!(layer.preserve_opacity, false);
+        assert_eq!(layer.clipping, false);
+        assert_eq!(layer.blending_mode, BlendingMode::Normal);
+        assert_eq!(layer.name, Some("Layer1".into()));
+        assert_eq!(layer.parent_set, None);
+        assert_eq!(layer.parent_layer, None);
+        assert_eq!(layer.open, None);
+        assert_eq!(layer.texture, None);
+        assert_eq!(layer.effect, None);
+        // FIX(Unavailable): layers_no_decompress
+        assert_eq!(layer.data, None);
 
         Ok(())
     }

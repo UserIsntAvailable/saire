@@ -1,14 +1,11 @@
 mod table;
 
+pub use self::table::{LayerRef, LayerTable};
+
 use super::{FatEntryReader, FormatError, Result};
 use crate::cipher::PAGE_SIZE;
 use itertools::Itertools;
-use std::{
-    cmp::Ordering,
-    ffi::{c_uchar, CStr},
-};
-
-pub use table::{LayerRef, LayerTable};
+use std::{cmp::Ordering, ffi::CStr};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,16 +26,14 @@ pub enum LayerKind {
 
 impl LayerKind {
     fn new(value: u16) -> Result<Self> {
-        use LayerKind as K;
-
         Ok(match value {
-            0 => K::RootLayer,
-            3 => K::Regular,
-            4 => K::_Unknown4,
-            5 => K::Linework,
-            6 => K::Mask,
-            7 => K::_Unknown7,
-            8 => K::Set,
+            0 => Self::RootLayer,
+            3 => Self::Regular,
+            4 => Self::_Unknown4,
+            5 => Self::Linework,
+            6 => Self::Mask,
+            7 => Self::_Unknown7,
+            8 => Self::Set,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
@@ -59,20 +54,18 @@ pub enum BlendingMode {
 }
 
 impl BlendingMode {
-    fn new(bytes: [c_uchar; 4]) -> Result<Self> {
-        use BlendingMode as B;
-
-        // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
-        Ok(match unsafe { std::str::from_utf8_unchecked(&bytes) } {
-            "pass" => B::PassThrough,
-            "norm" => B::Normal,
-            "mul " => B::Multiply,
-            "scrn" => B::Screen,
-            "over" => B::Overlay,
-            "add " => B::Luminosity,
-            "sub " => B::Shade,
-            "adsb" => B::LumiShade,
-            "cbin" => B::Binary,
+    fn new(mut buf: [u8; 4]) -> Result<Self> {
+        buf.reverse();
+        Ok(match &buf {
+            b"pass" => Self::PassThrough,
+            b"norm" => Self::Normal,
+            b"mul " => Self::Multiply,
+            b"scrn" => Self::Screen,
+            b"over" => Self::Overlay,
+            b"add " => Self::Luminosity,
+            b"sub " => Self::Shade,
+            b"adsb" => Self::LumiShade,
+            b"cbin" => Self::Binary,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
@@ -102,13 +95,13 @@ pub enum TextureName {
 
 impl TextureName {
     fn new(name: &str) -> Result<Self> {
-        match name {
-            "Watercolor A" => Ok(Self::WatercolorA),
-            "Watercolor B" => Ok(Self::WatercolorB),
-            "Paper" => Ok(Self::Paper),
-            "Canvas" => Ok(Self::Canvas),
-            _ => Err(FormatError::Invalid.into()),
-        }
+        Ok(match name {
+            "Watercolor A" => Self::WatercolorA,
+            "Watercolor B" => Self::WatercolorB,
+            "Paper" => Self::Paper,
+            "Canvas" => Self::Canvas,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -146,6 +139,33 @@ impl Default for Effect {
             opacity: 100,
             width: 15,
         }
+    }
+}
+
+enum StreamTag {
+    Name,
+    Pfid,
+    Plid,
+    Fopn,
+    Texn,
+    Texp,
+    Peff,
+}
+
+impl TryFrom<[u8; 4]> for StreamTag {
+    type Error = super::Error;
+
+    fn try_from(value: [u8; 4]) -> Result<Self> {
+        Ok(match &value {
+            b"name" => Self::Name,
+            b"pfid" => Self::Pfid,
+            b"plid" => Self::Plid,
+            b"fopn" => Self::Fopn,
+            b"texn" => Self::Texn,
+            b"texp" => Self::Texp,
+            b"peff" => Self::Peff,
+            _ => return Err(FormatError::Invalid.into()),
+        })
     }
 }
 
@@ -200,8 +220,8 @@ impl Layer {
         decompress_layer_data: bool,
     ) -> Result<Self> {
         let kind = reader.read_u32()?;
-        let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
-        let kind = LayerKind::new(kind)?;
+        #[allow(clippy::cast_lossless)]
+        let kind = LayerKind::new(kind as u16)?;
 
         let id = reader.read_u32()?;
         let bounds = LayerBounds {
@@ -217,8 +237,7 @@ impl Layer {
         let clipping = reader.read_bool()?;
         let _ = reader.read_u8()?;
 
-        let mut blending_mode = reader.read_array::<4>()?;
-        blending_mode.reverse();
+        let blending_mode = reader.read_array()?;
         let blending_mode = BlendingMode::new(blending_mode)?;
 
         let mut layer = Self {
@@ -239,31 +258,35 @@ impl Layer {
             data: None,
         };
 
-        // SAFETY: all fields have been read.
-        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
-            match unsafe { std::str::from_utf8_unchecked(&tag) } {
-                "name" => {
+        while let Some((tag, size)) = reader.read_stream_header().transpose()? {
+            let Some(tag) = tag else {
+                reader.read_exact(&mut vec![0; size as usize])?;
+                continue;
+            };
+
+            match tag {
+                StreamTag::Name => {
                     let name = reader.read_array::<256>()?;
                     let name = CStr::from_bytes_until_nul(&name)
                         .expect("contains null character")
                         .to_owned()
                         .into_string()
+                        // FIX(Unavailable): I'm pretty sure the names can be UTF-16, specially
+                        // becuase we are talking about windows here...
                         .expect("UTF-8");
-
                     let _ = layer.name.insert(name);
                 }
-                "pfid" => drop(layer.parent_set.insert(reader.read_u32()?)),
-                "plid" => drop(layer.parent_layer.insert(reader.read_u32()?)),
-                "fopn" => drop(layer.open.insert(reader.read_bool()?)),
-                "texn" => {
+                StreamTag::Pfid => _ = layer.parent_set.insert(reader.read_u32()?),
+                StreamTag::Plid => _ = layer.parent_layer.insert(reader.read_u32()?),
+                StreamTag::Fopn => _ = layer.open.insert(reader.read_bool()?),
+                StreamTag::Texn => {
                     let buf = reader.read_array::<64>()?;
                     let name = String::from_utf8_lossy(&buf);
                     let name = TextureName::new(name.trim_end_matches('\0'))?;
 
                     layer.texture.get_or_insert_with(Default::default).name = name;
                 }
-                "texp" => {
+                StreamTag::Texp => {
                     // This values are always set, even if `texn` isn't.
                     let scale = reader.read_u16()?;
                     let opacity = reader.read_u8()?;
@@ -273,7 +296,7 @@ impl Layer {
                         texture.opacity = opacity;
                     };
                 }
-                "peff" => {
+                StreamTag::Peff => {
                     let enabled = reader.read_bool()?;
                     let opacity = reader.read_u8()?;
                     let width = reader.read_u8()?;
@@ -282,7 +305,6 @@ impl Layer {
                         let _ = layer.effect.insert(Effect { opacity, width });
                     }
                 }
-                _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
         }
 

@@ -1,10 +1,7 @@
 use super::FileSystemReader;
 use crate::cipher::{FatEntry, FatKind, VirtualPage, PAGE_SIZE};
 use crate::Result;
-use std::{
-    ffi,
-    io::{BufWriter, Cursor, Read, Write},
-};
+use std::io::{BufWriter, Cursor, Read, Write};
 
 // When generic_const_expr gonna hit stable? ...
 
@@ -100,20 +97,22 @@ impl<'a> FatEntryReader<'a> {
     read_integer!(read_i32, i32);
     read_integer!(read_u64, u64);
 
+    #[inline]
     pub(crate) fn read_bool(&mut self) -> Result<bool> {
         Ok(self.read_u8()? >= 1)
     }
 
-    /// TODO
-    pub(crate) unsafe fn read_next_stream_header(&mut self) -> Option<([ffi::c_uchar; 4], u32)> {
-        let mut tag = self.read_array::<4>().ok()?;
-
-        if tag != [0, 0, 0, 0] {
-            tag.reverse();
-            let size = self.read_u32().ok()?;
-            return Some((tag, size));
+    pub(crate) fn read_stream_header<T>(&mut self) -> Option<Result<(Option<T>, u32)>>
+    where
+        T: TryFrom<[u8; 4]>,
+    {
+        match self.read_array() {
+            Ok(mut tag) => (tag != [0, 0, 0, 0]).then(|| {
+                tag.reverse();
+                let tag = T::try_from(tag).ok();
+                self.read_u32().map(|size| (tag, size))
+            }),
+            Err(err) => Some(Err(err)),
         }
-
-        None
     }
 }

@@ -11,13 +11,11 @@ pub enum SizeUnit {
 
 impl SizeUnit {
     fn new(value: u16) -> Result<Self> {
-        use SizeUnit as S;
-
         Ok(match value {
-            0 => S::Pixels,
-            1 => S::Inch,
-            2 => S::Centimeters,
-            3 => S::Milimeters,
+            0 => Self::Pixels,
+            1 => Self::Inch,
+            2 => Self::Centimeters,
+            3 => Self::Milimeters,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
@@ -34,11 +32,28 @@ pub enum ResolutionUnit {
 
 impl ResolutionUnit {
     fn new(value: u16) -> Result<Self> {
-        use ResolutionUnit as U;
-
         Ok(match value {
-            0 => U::PixelsInch,
-            1 => U::PixelsCm,
+            0 => Self::PixelsInch,
+            1 => Self::PixelsCm,
+            _ => return Err(FormatError::Invalid.into()),
+        })
+    }
+}
+
+enum StreamTag {
+    Reso,
+    Wsrc,
+    Layr,
+}
+
+impl TryFrom<[u8; 4]> for StreamTag {
+    type Error = super::Error;
+
+    fn try_from(value: [u8; 4]) -> Result<Self> {
+        Ok(match &value {
+            b"reso" => Self::Reso,
+            b"wsrc" => Self::Wsrc,
+            b"layr" => Self::Layr,
             _ => return Err(FormatError::Invalid.into()),
         })
     }
@@ -87,11 +102,14 @@ impl Canvas {
             selected_layer: None,
         };
 
-        // SAFETY: all fields have been read.
-        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
-            match unsafe { std::str::from_utf8_unchecked(&tag) } {
-                "reso" => {
+        while let Some((tag, size)) = reader.read_stream_header().transpose()? {
+            let Some(tag) = tag else {
+                reader.read_exact(&mut vec![0; size as usize])?;
+                continue;
+            };
+
+            match tag {
+                StreamTag::Reso => {
                     // Conversion from 16.16 fixed point integer to a float.
                     let _ = canvas
                         .dots_per_inch
@@ -105,9 +123,8 @@ impl Canvas {
                     let resolution_unit = ResolutionUnit::new(resolution_unit)?;
                     let _ = canvas.resolution_unit.insert(resolution_unit);
                 }
-                "wsrc" => drop(canvas.selection_source.insert(reader.read_u32()?)),
-                "layr" => drop(canvas.selected_layer.insert(reader.read_u32()?)),
-                _ => reader.read_exact(&mut vec![0; size as usize])?,
+                StreamTag::Wsrc => _ = canvas.selection_source.insert(reader.read_u32()?),
+                StreamTag::Layr => _ = canvas.selected_layer.insert(reader.read_u32()?),
             }
         }
 
