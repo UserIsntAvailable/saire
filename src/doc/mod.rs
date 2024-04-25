@@ -24,56 +24,6 @@ use std::{
 // DOCS:
 // TODO: serde feature.
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-// TODO: Simplify error handling
-
-#[derive(Debug)]
-pub enum Error {
-    IoError(io::Error),
-    Format(FormatError),
-    Unknown(),
-}
-
-#[derive(Debug)]
-pub enum FormatError {
-    MissingEntry(String),
-    Invalid,
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::IoError(io) => write!(f, "{io}"),
-            Self::Format(format) => write!(f, "{format}"),
-            Self::Unknown() => write!(f, "Something went wrong while reading the file."),
-        }
-    }
-}
-
-impl Display for FormatError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MissingEntry(entry) => write!(f, "'{entry}' entry is missing."),
-            Self::Invalid => write!(f, "Invalid/Corrupted sai file."),
-        }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Error::IoError(err)
-    }
-}
-
-impl From<FormatError> for Error {
-    fn from(err: FormatError) -> Self {
-        Self::Format(err)
-    }
-}
-
-impl std::error::Error for Error {}
-
 pub struct SaiDocument {
     fs: FileSystemReader,
 }
@@ -85,7 +35,7 @@ pub struct SaiDocument {
 
 macro_rules! file_method {
     ($method_name:ident, $return_type:ty, $file_name:literal) => {
-        pub fn $method_name(&self) -> $crate::Result<$return_type> {
+        pub fn $method_name(&self) -> io::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
             let mut reader = FatEntryReader::new(&self.fs, &file);
             <$return_type>::new(&mut reader)
@@ -95,7 +45,7 @@ macro_rules! file_method {
 
 macro_rules! layers_method {
     ($method_name:ident, $layer_name:literal, $decompress_layer:literal) => {
-        pub fn $method_name(&self) -> $crate::Result<Vec<Layer>> {
+        pub fn $method_name(&self) -> io::Result<Vec<Layer>> {
             self.get_layers($layer_name, $decompress_layer)
         }
     };
@@ -103,7 +53,7 @@ macro_rules! layers_method {
 
 macro_rules! layers_no_decompress_method {
     ($method_name:ident, $layer_name:literal) => {
-        fn $method_name(&self) -> $crate::Result<Vec<Layer>> {
+        fn $method_name(&self) -> io::Result<Vec<Layer>> {
             self.get_layers($layer_name, false)
         }
     };
@@ -128,17 +78,22 @@ impl SaiDocument {
         }
     }
 
-    fn traverse_until(&self, filename: &str) -> Result<FatEntry> {
+    fn traverse_until(&self, filename: &str) -> io::Result<FatEntry> {
         self.fs
             .traverse_root(|_, entry| entry.name().is_some_and(|name| name.contains(filename)))
-            .ok_or(FormatError::MissingEntry(filename.to_string()).into())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{filename} entry was not found"),
+                )
+            })
     }
 
     fn get_layers(
         &self,
         layer_folder: &'static str,
         decompress_layers: bool,
-    ) -> Result<Vec<Layer>> {
+    ) -> io::Result<Vec<Layer>> {
         (0..)
             .scan(
                 Some(self.traverse_until(layer_folder)?.next_block()),
@@ -191,7 +146,7 @@ impl From<&[u8]> for SaiDocument {
 
 impl Display for SaiDocument {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let mut layers: Vec<Layer> = self.layers_no_decompress().unwrap();
+        let mut layers = self.layers_no_decompress().unwrap();
         self.laytbl().unwrap().sort_layers(&mut layers);
         layers.reverse();
 
@@ -201,11 +156,11 @@ impl Display for SaiDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::{*, layer::*, canvas::*};
+    use super::{canvas::*, layer::*, *};
     use crate::utils::tests::SAMPLE as BYTES;
 
     #[test]
-    fn author_works() -> Result<()> {
+    fn author_works() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
 
         let author = doc.author()?;
@@ -218,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn laybtl_works() -> Result<()> {
+    fn laybtl_works() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
         let laytbl = doc.laytbl()?;
 
@@ -239,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn layers_works() -> Result<()> {
+    fn layers_works() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
         let layers = doc.layers_no_decompress()?;
 
@@ -271,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn canvas_works() -> Result<()> {
+    fn canvas_works() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
         let author = doc.canvas()?;
 
@@ -294,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn sublayers_is_err() -> Result<()> {
+    fn sublayers_is_err() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
         assert!(doc.sublayers().is_err());
 
@@ -302,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_works() -> Result<()> {
+    fn thumbnail_works() -> io::Result<()> {
         let doc = SaiDocument::from(BYTES);
         let thumbnail = doc.thumbnail()?;
 
@@ -316,10 +271,8 @@ mod tests {
     #[test]
     fn display_works() {
         let doc = SaiDocument::from(BYTES);
-        let output = doc.to_string();
-
         assert_eq!(
-            format!("\n{output}"),
+            format!("\n{doc}"),
             r#"
 .
 └─ Layer1

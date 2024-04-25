@@ -12,6 +12,6 @@ pub mod utils;
 pub(crate) mod cipher;
 pub(crate) mod fs;
 
-pub use doc::{Error, FormatError, Result, SaiDocument};
+pub use doc::SaiDocument;
 
 // TODO: `simd` feature.

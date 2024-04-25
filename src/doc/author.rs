@@ -1,4 +1,5 @@
-use super::{utils, FatEntryReader, Result};
+use super::{utils, FatEntryReader};
+use std::io;
 
 // TODO: This should actually be called `Document`.
 //
@@ -21,11 +22,11 @@ pub struct Author {
 }
 
 impl Author {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
         let bitflag = reader.read_u32()?;
 
         if bitflag & 0x1000000 != 0 {
-            return Err(crate::FormatError::Invalid.into());
+            return Err(io::ErrorKind::InvalidData.into());
         }
 
         // NOTE(rev-eng): Increased by 1 for every save (also export). Caps at `u32::MAX`.
@@ -34,7 +35,7 @@ impl Author {
         // wrapped around...
         let _ = reader.read_u32()?;
 
-        let mut read_date = || -> Result<u64> {
+        let mut read_date = || -> io::Result<u64> {
             let date = reader.read_u64()?;
             // For some reason, here it uses `seconds` since `January 1, 1601`; gotta love the
             // consistency.

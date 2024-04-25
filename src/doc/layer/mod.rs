@@ -2,10 +2,10 @@ mod table;
 
 pub use self::table::{LayerRef, LayerTable};
 
-use super::{FatEntryReader, FormatError, Result};
+use super::FatEntryReader;
 use crate::cipher::PAGE_SIZE;
 use itertools::Itertools;
-use std::{cmp::Ordering, ffi::CStr};
+use std::{cmp::Ordering, ffi::CStr, io};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,7 +25,7 @@ pub enum LayerKind {
 }
 
 impl LayerKind {
-    fn new(value: u16) -> Result<Self> {
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
             0 => Self::RootLayer,
             3 => Self::Regular,
@@ -34,7 +34,7 @@ impl LayerKind {
             6 => Self::Mask,
             7 => Self::_Unknown7,
             8 => Self::Set,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -54,7 +54,7 @@ pub enum BlendingMode {
 }
 
 impl BlendingMode {
-    fn new(mut buf: [u8; 4]) -> Result<Self> {
+    fn new(mut buf: [u8; 4]) -> io::Result<Self> {
         buf.reverse();
         Ok(match &buf {
             b"pass" => Self::PassThrough,
@@ -66,7 +66,7 @@ impl BlendingMode {
             b"sub " => Self::Shade,
             b"adsb" => Self::LumiShade,
             b"cbin" => Self::Binary,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -94,13 +94,13 @@ pub enum TextureName {
 }
 
 impl TextureName {
-    fn new(name: &str) -> Result<Self> {
+    fn new(name: &str) -> io::Result<Self> {
         Ok(match name {
             "Watercolor A" => Self::WatercolorA,
             "Watercolor B" => Self::WatercolorB,
             "Paper" => Self::Paper,
             "Canvas" => Self::Canvas,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -153,9 +153,9 @@ enum StreamTag {
 }
 
 impl TryFrom<[u8; 4]> for StreamTag {
-    type Error = super::Error;
+    type Error = io::Error;
 
-    fn try_from(value: [u8; 4]) -> Result<Self> {
+    fn try_from(value: [u8; 4]) -> io::Result<Self> {
         Ok(match &value {
             b"name" => Self::Name,
             b"pfid" => Self::Pfid,
@@ -164,7 +164,7 @@ impl TryFrom<[u8; 4]> for StreamTag {
             b"texn" => Self::Texn,
             b"texp" => Self::Texp,
             b"peff" => Self::Peff,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -218,7 +218,7 @@ impl Layer {
     pub(crate) fn new(
         reader: &mut FatEntryReader<'_>,
         decompress_layer_data: bool,
-    ) -> Result<Self> {
+    ) -> io::Result<Self> {
         let kind = reader.read_u32()?;
         #[allow(clippy::cast_lossless)]
         let kind = LayerKind::new(kind as u16)?;
@@ -323,9 +323,10 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::{SaiDocument, Result, doc::layer::LayerKind};
+    /// use saire::{SaiDocument, doc::layer::LayerKind};
+    /// use std::io;
     ///
-    /// fn main() -> Result<()> {
+    /// fn main() -> io::Result<()> {
     ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
     ///     let layer = &layers[0];
     ///
@@ -346,7 +347,7 @@ impl Layer {
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
     // TODO(Unavailable): size_hint: Option<SizeHint>
-    pub fn to_png<P>(&self, path: Option<P>) -> Result<()>
+    pub fn to_png<P>(&self, path: Option<P>) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
     {
@@ -416,7 +417,7 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
 fn decompress_layer(
     (width, height): (usize, usize),
     reader: &mut FatEntryReader<'_>,
-) -> Result<Vec<u8>> {
+) -> io::Result<Vec<u8>> {
     const TILE_SIZE: usize = 32;
 
     let tile_map_height = height / TILE_SIZE;

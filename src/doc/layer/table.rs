@@ -1,7 +1,8 @@
 use super::{Layer, LayerKind};
-use crate::{fs::reader::FatEntryReader, Result};
+use crate::fs::reader::FatEntryReader;
 use indexmap::{map::IntoIter as MapIntoIter, IndexMap};
 use std::{
+    io,
     iter::{self, FusedIterator},
     ops::Index,
 };
@@ -30,9 +31,10 @@ use std::{
 /// # Examples
 ///
 /// ```no_run
-/// use saire::{SaiDocument, Result};
+/// use saire::SaiDocument;
+/// use std::io;
 ///
-/// fn main() -> Result<()> {
+/// fn main() -> io::Result<()> {
 ///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
 ///     // subtbl works the same in the same way.
 ///     let laytbl = doc.laytbl()?;
@@ -62,7 +64,7 @@ pub struct LayerRef {
 }
 
 impl LayerTable {
-    pub(crate) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub(crate) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
         Ok(LayerTable {
             map: (0..reader.read_u32()?)
                 .map(|_| {
@@ -82,7 +84,7 @@ impl LayerTable {
                         },
                     ))
                 })
-                .collect::<Result<_>>()?,
+                .collect::<io::Result<_>>()?,
         })
     }
 

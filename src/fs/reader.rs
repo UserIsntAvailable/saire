@@ -1,14 +1,13 @@
 use super::FileSystemReader;
 use crate::cipher::{FatEntry, FatKind, VirtualPage, PAGE_SIZE};
-use crate::Result;
-use std::io::{BufWriter, Cursor, Read, Write};
+use std::io::{self, BufWriter, Cursor, Read, Write};
 
 // When generic_const_expr gonna hit stable? ...
 
 macro_rules! read_integer {
     ($ident:ident, $ty:ty) => {
         #[inline]
-        pub(crate) fn $ident(&mut self) -> Result<$ty> {
+        pub(crate) fn $ident(&mut self) -> io::Result<$ty> {
             let array = self.read_array::<{ std::mem::size_of::<$ty>() }>()?;
             Ok(<$ty>::from_le_bytes(array))
         }
@@ -36,12 +35,12 @@ impl<'a> FatEntryReader<'a> {
     }
 
     /// TODO
-    pub(crate) fn read_exact(&mut self, buffer: &mut [u8]) -> Result<()> {
+    pub(crate) fn read_exact(&mut self, buffer: &mut [u8]) -> io::Result<()> {
         self.read_with_size(buffer, buffer.len())
     }
 
     /// TODO
-    pub(crate) fn read_with_size(&mut self, buffer: &mut [u8], size: usize) -> Result<()> {
+    pub(crate) fn read_with_size(&mut self, buffer: &mut [u8], size: usize) -> io::Result<()> {
         let mut left_to_read = size;
         let mut writer = BufWriter::new(buffer);
 
@@ -85,7 +84,7 @@ impl<'a> FatEntryReader<'a> {
 
     #[inline]
     /// Reads `N` bytes, and returns [u8; N].
-    pub(crate) fn read_array<const N: usize>(&mut self) -> Result<[u8; N]> {
+    pub(crate) fn read_array<const N: usize>(&mut self) -> io::Result<[u8; N]> {
         let mut array = [0; N];
         self.read_exact(&mut array)?;
         Ok(array)
@@ -98,11 +97,11 @@ impl<'a> FatEntryReader<'a> {
     read_integer!(read_u64, u64);
 
     #[inline]
-    pub(crate) fn read_bool(&mut self) -> Result<bool> {
+    pub(crate) fn read_bool(&mut self) -> io::Result<bool> {
         Ok(self.read_u8()? >= 1)
     }
 
-    pub(crate) fn read_stream_header<T>(&mut self) -> Option<Result<(Option<T>, u32)>>
+    pub(crate) fn read_stream_header<T>(&mut self) -> Option<io::Result<(Option<T>, u32)>>
     where
         T: TryFrom<[u8; 4]>,
     {

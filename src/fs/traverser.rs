@@ -117,10 +117,9 @@ mod tests {
             }
 
             fn add_row(&self, entry: &FatEntry) {
-                let date =
-                    chrono::NaiveDateTime::from_timestamp_opt(entry.unixtime() as i64, 0)
-                        .expect("timestamp is not out-of-bounds.")
-                        .format("%Y-%m-%d");
+                let date = chrono::NaiveDateTime::from_timestamp_opt(entry.unixtime() as i64, 0)
+                    .expect("timestamp is not out-of-bounds.")
+                    .format("%Y-%m-%d");
 
                 self.table
                     .borrow_mut()

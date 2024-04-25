@@ -5,7 +5,6 @@ use crate::cipher::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTOR, PAGE_
 use std::{
     cell::RefCell,
     collections::HashMap,
-    convert::AsRef,
     fs::File,
     io::{BufReader, Cursor, Read, Seek},
 };

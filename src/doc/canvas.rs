@@ -1,4 +1,5 @@
-use super::{FatEntryReader, FormatError, Result};
+use super::FatEntryReader;
+use std::io;
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,13 +11,13 @@ pub enum SizeUnit {
 }
 
 impl SizeUnit {
-    fn new(value: u16) -> Result<Self> {
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
             0 => Self::Pixels,
             1 => Self::Inch,
             2 => Self::Centimeters,
             3 => Self::Milimeters,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -31,11 +32,11 @@ pub enum ResolutionUnit {
 }
 
 impl ResolutionUnit {
-    fn new(value: u16) -> Result<Self> {
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
             0 => Self::PixelsInch,
             1 => Self::PixelsCm,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -47,14 +48,14 @@ enum StreamTag {
 }
 
 impl TryFrom<[u8; 4]> for StreamTag {
-    type Error = super::Error;
+    type Error = io::Error;
 
-    fn try_from(value: [u8; 4]) -> Result<Self> {
+    fn try_from(value: [u8; 4]) -> io::Result<Self> {
         Ok(match &value {
             b"reso" => Self::Reso,
             b"wsrc" => Self::Wsrc,
             b"layr" => Self::Layr,
-            _ => return Err(FormatError::Invalid.into()),
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -81,11 +82,11 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
         let alignment = reader.read_u32()?;
 
         if alignment != 16 {
-            return Err(FormatError::Invalid.into());
+            return Err(io::ErrorKind::InvalidData.into());
         }
 
         let width = reader.read_u32()?;

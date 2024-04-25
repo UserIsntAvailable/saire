@@ -1,4 +1,5 @@
-use super::{FatEntryReader, FormatError, Result};
+use super::FatEntryReader;
+use std::io;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumbnail {
@@ -11,14 +12,14 @@ pub struct Thumbnail {
 }
 
 impl Thumbnail {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
         let width = reader.read_u32()?;
         let height = reader.read_u32()?;
 
         let magic = reader.read_array::<4>()?;
 
         if &magic != b"BM32" {
-            return Err(FormatError::Invalid.into());
+            return Err(io::ErrorKind::InvalidData.into());
         }
 
         let pixels_len = (width * height * 4) as usize;
@@ -42,7 +43,7 @@ impl Thumbnail {
     /// # Errors
     ///
     /// - If it wasn't able to save the image.
-    pub fn to_png<P>(&self, path: P) -> Result<()>
+    pub fn to_png<P>(&self, path: P) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
     {
