@@ -1,4 +1,4 @@
-use super::FatEntryReader;
+use crate::{fs::FatEntryReader, internals::image::PngImage};
 use std::io;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +47,7 @@ impl Thumbnail {
     where
         P: AsRef<std::path::Path>,
     {
-        let png = crate::utils::image::PngImage {
+        let png = PngImage {
             width: self.width,
             height: self.height,
             ..Default::default()

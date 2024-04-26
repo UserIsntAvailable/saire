@@ -15,6 +15,7 @@
 //! Every other block that is not a `TableBlock` is a [`DataBlock`].
 
 use self::safe_transmute::SafeTransmute;
+use crate::internals::time;
 use core::{
     ffi::{c_uchar, CStr},
     fmt, mem,
@@ -324,7 +325,7 @@ impl FatEntry {
     /// Represents the number of seconds since `January 1, 1970` (epoch).
     #[inline]
     pub const fn unixtime(&self) -> u64 {
-        crate::utils::time::filetime_to_unixtime(self.filetime)
+        time::filetime_to_unixtime(self.filetime)
     }
 }
 
@@ -537,7 +538,7 @@ mod safe_transmute {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::tests::SAMPLE as BYTES;
+    use crate::internals::tests::SAMPLE as BYTES;
 
     const TABLE_INDEX: u32 = 0;
     const ROOT_INDEX: usize = 2;

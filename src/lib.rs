@@ -7,10 +7,11 @@
 )]
 
 pub mod doc;
-pub mod utils;
+pub mod pixel_ops;
 
 pub(crate) mod cipher;
 pub(crate) mod fs;
+pub(crate) mod internals;
 
 pub use doc::SaiDocument;
 

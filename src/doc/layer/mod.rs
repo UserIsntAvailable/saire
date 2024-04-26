@@ -2,8 +2,10 @@ mod table;
 
 pub use self::table::{LayerRef, LayerTable};
 
-use super::FatEntryReader;
-use crate::cipher::PAGE_SIZE;
+use crate::{
+    cipher::PAGE_SIZE, fs::FatEntryReader, internals::image::PngImage,
+    pixel_ops::premultiplied_to_straight,
+};
 use itertools::Itertools;
 use std::{cmp::Ordering, ffi::CStr, io};
 
@@ -351,8 +353,6 @@ impl Layer {
     where
         P: AsRef<std::path::Path>,
     {
-        use crate::utils::{image::PngImage, pixel_ops::premultiplied_to_straight};
-
         if let Some(ref image_data) = self.data {
             let png = PngImage {
                 width: self.bounds.width,

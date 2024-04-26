@@ -1,5 +1,5 @@
 use super::{Layer, LayerKind};
-use crate::fs::reader::FatEntryReader;
+use crate::fs::FatEntryReader;
 use indexmap::{map::IntoIter as MapIntoIter, IndexMap};
 use std::{
     io,

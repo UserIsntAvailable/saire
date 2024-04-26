@@ -3,17 +3,8 @@ pub mod canvas;
 pub mod layer;
 pub mod thumbnail;
 
-use self::{
-    author::Author,
-    canvas::Canvas,
-    layer::{Layer, LayerTable},
-    thumbnail::Thumbnail,
-};
-use crate::{
-    cipher::FatEntry,
-    fs::{reader::FatEntryReader, traverser::FsTraverser, FileSystemReader},
-    utils,
-};
+use self::{author::*, canvas::*, layer::*, thumbnail::*};
+use crate::{cipher::FatEntry, fs::*, internals::tree::LayerTree};
 use std::{
     fmt::{Display, Formatter},
     fs::File,
@@ -149,15 +140,14 @@ impl Display for SaiDocument {
         let mut layers = self.layers_no_decompress().unwrap();
         self.laytbl().unwrap().sort_layers(&mut layers);
         layers.reverse();
-
-        utils::tree::LayerTree::new(layers).fmt(f)
+        write!(f, "{}", LayerTree::new(layers))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{canvas::*, layer::*, *};
-    use crate::utils::tests::SAMPLE as BYTES;
+    use super::*;
+    use crate::internals::tests::SAMPLE as BYTES;
 
     #[test]
     fn author_works() -> io::Result<()> {

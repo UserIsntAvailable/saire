@@ -2,8 +2,10 @@
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
 
-use super::FileSystemReader;
-use crate::cipher::{FatEntry, FatKind};
+use crate::{
+    cipher::{FatEntry, FatKind},
+    fs::FileSystemReader,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraverseEvent {
@@ -82,23 +84,22 @@ fn traverse_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cipher::{FatEntry, FatKind},
-        utils::tests::SAMPLE as BYTES,
-    };
-    use eyre::Result;
+    use crate::internals::tests::SAMPLE as BYTES;
     use std::{
         cell::{Cell, RefCell},
         fmt::Display,
+        io,
     };
-
     // TODO: This is useless ('<', '^', '>'). std formatter can _apparently_ already do it.
     use tabular::{Row, Table};
 
     #[test]
     // Cool tree view of the underlying sai file system. Keeping it here to make sure the file is being read correctly :).
-    fn traverser_works() -> Result<()> {
-        #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
+    fn traverser_works() -> io::Result<()> {
+        struct TreeVisitor {
+            depth: Cell<usize>,
+            table: RefCell<Table>,
+        }
 
         impl TreeVisitor {
             fn visit(&self, action: TraverseEvent, entry: &FatEntry) -> bool {

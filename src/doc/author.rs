@@ -1,4 +1,4 @@
-use super::{utils, FatEntryReader};
+use crate::{fs::FatEntryReader, internals::time};
 use std::io;
 
 // TODO: This should actually be called `Document`.
@@ -41,7 +41,7 @@ impl Author {
             // consistency.
             let filetime = date * 10000000;
 
-            Ok(utils::time::filetime_to_unixtime(filetime))
+            Ok(time::filetime_to_unixtime(filetime))
         };
 
         Ok(Self {

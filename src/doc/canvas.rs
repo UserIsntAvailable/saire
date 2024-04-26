@@ -1,4 +1,4 @@
-use super::FatEntryReader;
+use crate::fs::FatEntryReader;
 use std::io;
 
 #[repr(u16)]
