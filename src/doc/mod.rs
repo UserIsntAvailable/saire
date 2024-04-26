@@ -29,7 +29,7 @@ macro_rules! file_method {
         pub fn $method_name(&self) -> io::Result<$return_type> {
             let file = self.traverse_until($file_name)?;
             let mut reader = FatEntryReader::new(&self.fs, &file);
-            <$return_type>::new(&mut reader)
+            <$return_type>::from_reader(&mut reader)
         }
     };
 }
@@ -102,7 +102,7 @@ impl SaiDocument {
                     .filter(|i| i.flags() != 0)
                     .map(|i| {
                         let mut reader = FatEntryReader::new(&self.fs, i);
-                        Layer::new(&mut reader, decompress_layers)
+                        Layer::from_reader(&mut reader, decompress_layers)
                     })
                     .collect::<Vec<_>>()
             })

@@ -1,3 +1,4 @@
+pub mod binreader;
 #[cfg(feature = "png")]
 pub mod image;
 pub mod tree;

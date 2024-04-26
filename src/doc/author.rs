@@ -1,5 +1,5 @@
-use crate::{fs::FatEntryReader, internals::time};
-use std::io;
+use crate::internals::{binreader::BinReader, time};
+use std::io::{self, Read};
 
 // TODO: This should actually be called `Document`.
 //
@@ -22,7 +22,12 @@ pub struct Author {
 }
 
 impl Author {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let bitflag = reader.read_u32()?;
 
         if bitflag & 0x1000000 != 0 {

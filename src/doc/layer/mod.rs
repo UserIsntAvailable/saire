@@ -3,11 +3,16 @@ mod table;
 pub use self::table::{LayerRef, LayerTable};
 
 use crate::{
-    cipher::PAGE_SIZE, fs::FatEntryReader, internals::image::PngImage,
+    cipher::PAGE_SIZE,
+    internals::{binreader::BinReader, image::PngImage},
     pixel_ops::premultiplied_to_straight,
 };
 use itertools::Itertools;
-use std::{cmp::Ordering, ffi::CStr, io};
+use std::{
+    cmp::Ordering,
+    ffi::CStr,
+    io::{self, Read},
+};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,10 +222,12 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub(crate) fn new(
-        reader: &mut FatEntryReader<'_>,
-        decompress_layer_data: bool,
-    ) -> io::Result<Self> {
+    pub fn from_reader<R>(reader: &mut R, decompress_data: bool) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let kind = reader.read_u32()?;
         #[allow(clippy::cast_lossless)]
         let kind = LayerKind::new(kind as u16)?;
@@ -262,10 +269,9 @@ impl Layer {
 
         while let Some((tag, size)) = reader.read_stream_header().transpose()? {
             let Some(tag) = tag else {
-                reader.read_exact(&mut vec![0; size as usize])?;
+                reader.skip(size as usize)?;
                 continue;
             };
-
             match tag {
                 StreamTag::Name => {
                     let name = reader.read_array::<256>()?;
@@ -274,7 +280,7 @@ impl Layer {
                         .to_owned()
                         .into_string()
                         // FIX(Unavailable): I'm pretty sure the names can be UTF-16, specially
-                        // becuase we are talking about windows here...
+                        // because we are talking about windows here...
                         .expect("UTF-8");
                     let _ = layer.name.insert(name);
                 }
@@ -305,15 +311,14 @@ impl Layer {
 
                     if enabled {
                         let _ = layer.effect.insert(Effect { opacity, width });
-                    }
+                    };
                 }
             }
         }
 
-        if decompress_layer_data && kind == LayerKind::Regular {
+        if decompress_data && matches!(kind, LayerKind::Regular) {
             let dimensions = (bounds.width as usize, bounds.height as usize);
-            let data = decompress_layer(dimensions, reader)?;
-            let _ = layer.data.insert(data);
+            let _ = layer.data.insert(decompress(&mut reader, dimensions)?);
         };
 
         Ok(layer)
@@ -414,10 +419,10 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-fn decompress_layer(
-    (width, height): (usize, usize),
-    reader: &mut FatEntryReader<'_>,
-) -> io::Result<Vec<u8>> {
+fn decompress<R>(reader: &mut BinReader<R>, (width, height): (usize, usize)) -> io::Result<Vec<u8>>
+where
+    R: Read,
+{
     const TILE_SIZE: usize = 32;
 
     let tile_map_height = height / TILE_SIZE;
@@ -440,9 +445,17 @@ fn decompress_layer(
     {
         // Reads BGRA channels. Skip the next 4 ( unknown )
         for channel in 0..8 {
-            let size: usize = reader.read_u16()?.into();
-            reader.read_with_size(&mut rle_src, size)?;
+            let size = reader.read_u16()?.into();
+            let Some(buf) = rle_src.get_mut(..size) else {
+                return Err(io::ErrorKind::InvalidData.into());
+            };
+            reader.read_exact(buf)?;
 
+            // TODO(Unavailable): I can use `reader.skip()` when `channel >= 4`.
+            //
+            // It might generate better codegen, because LLVM would be able to
+            // realize that the `read` buffer is not used and remove any
+            // copying involved.
             if channel < 4 {
                 rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
             }

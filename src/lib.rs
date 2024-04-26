@@ -1,3 +1,4 @@
+#![allow(unused)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(rust_2018_idioms, clippy::pedantic)]
 #![allow(

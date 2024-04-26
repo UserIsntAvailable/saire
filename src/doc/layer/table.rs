@@ -1,8 +1,8 @@
 use super::{Layer, LayerKind};
-use crate::fs::FatEntryReader;
+use crate::internals::binreader::BinReader;
 use indexmap::{map::IntoIter as MapIntoIter, IndexMap};
 use std::{
-    io,
+    io::{self, Read},
     iter::{self, FusedIterator},
     ops::Index,
 };
@@ -64,7 +64,11 @@ pub struct LayerRef {
 }
 
 impl LayerTable {
-    pub(crate) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
         Ok(LayerTable {
             map: (0..reader.read_u32()?)
                 .map(|_| {
@@ -72,9 +76,9 @@ impl LayerTable {
                     let kind = LayerKind::new(reader.read_u16()?)?;
                     let tile_height = reader.read_u16()? as u32;
 
-                    // wasting, an extra u32, by keeping the id on both key and value sides, but 1)
-                    // it is easier to have a type instead of returning (u32, LayerRef), and 2) up
-                    // to an extra 1kB of memory usage is not that big of a deal.
+                    // NOTE: Wasting an extra u32 of memory, by keeping the id on both the key and
+                    // value sides, but 1) it is easier to have a type instead of returning (u32,
+                    // LayerRef), and 2) up to an extra 1kB of memory usage is not that big of a deal.
                     Ok((
                         id,
                         LayerRef {

@@ -1,5 +1,5 @@
-use crate::{fs::FatEntryReader, internals::image::PngImage};
-use std::io;
+use crate::internals::{binreader::BinReader, image::PngImage};
+use std::io::{self, Read};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumbnail {
@@ -12,7 +12,12 @@ pub struct Thumbnail {
 }
 
 impl Thumbnail {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let width = reader.read_u32()?;
         let height = reader.read_u32()?;
 
@@ -23,7 +28,7 @@ impl Thumbnail {
         }
 
         let pixels_len = (width * height * 4) as usize;
-        let mut pixels = vec![0u8; pixels_len];
+        let mut pixels = vec![0; pixels_len];
         reader.read_exact(pixels.as_mut_slice())?;
 
         pixels

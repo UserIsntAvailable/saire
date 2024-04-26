@@ -1,5 +1,5 @@
-use crate::fs::FatEntryReader;
-use std::io;
+use crate::internals::binreader::BinReader;
+use std::io::{self, Read};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +82,12 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> io::Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let alignment = reader.read_u32()?;
 
         if alignment != 16 {
@@ -105,10 +110,9 @@ impl Canvas {
 
         while let Some((tag, size)) = reader.read_stream_header().transpose()? {
             let Some(tag) = tag else {
-                reader.read_exact(&mut vec![0; size as usize])?;
+                reader.skip(size as usize)?;
                 continue;
             };
-
             match tag {
                 StreamTag::Reso => {
                     // Conversion from 16.16 fixed point integer to a float.
