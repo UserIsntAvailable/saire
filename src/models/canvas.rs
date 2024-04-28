@@ -89,7 +89,6 @@ impl Canvas {
         let mut reader = BinReader::new(reader);
 
         let alignment = reader.read_u32()?;
-
         if alignment != 16 {
             return Err(io::ErrorKind::InvalidData.into());
         }

@@ -1,4 +1,4 @@
-use crate::doc::layer::{Layer, LayerKind};
+use crate::models::layer::{Layer, LayerKind};
 use std::{
     borrow::Cow,
     collections::HashMap,

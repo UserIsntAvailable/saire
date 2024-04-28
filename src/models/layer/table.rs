@@ -31,13 +31,13 @@ use std::{
 /// # Examples
 ///
 /// ```no_run
-/// use saire::SaiDocument;
+/// use saire::Sai;
 /// use std::io;
 ///
 /// fn main() -> io::Result<()> {
-///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
-///     // subtbl works the same in the same way.
-///     let laytbl = doc.laytbl()?;
+///     let sai = Sai::new_unchecked("my_sai_file.sai");
+///     // subtbl works in the same way.
+///     let laytbl = sai.laytbl()?;
 ///
 ///     // id = 2 is `usually` the first layer.
 ///     assert_eq!(laytbl.get_index_of(2), Some(0));

@@ -4,7 +4,7 @@
 
 use crate::{
     cipher::{FatEntry, FatKind},
-    fs::FileSystemReader,
+    vfs::FileSystemReader,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

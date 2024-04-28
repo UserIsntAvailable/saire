@@ -330,11 +330,11 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::{SaiDocument, doc::layer::LayerKind};
+    /// use saire::{Sai, models::layer::LayerKind};
     /// use std::io;
     ///
     /// fn main() -> io::Result<()> {
-    ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
+    ///     let layers = Sai::new_unchecked("my_sai_file").layers()?;
     ///     let layer = &layers[0];
     ///
     ///     if layer.kind == LayerKind::Regular {
