@@ -21,7 +21,8 @@ impl Thumbnail {
         let width = reader.read_u32()?;
         let height = reader.read_u32()?;
 
-        let magic = reader.read_array()?;
+        let magic = reader.read_array::<4>()?;
+
         if &magic != b"BM32" {
             return Err(io::ErrorKind::InvalidData.into());
         }
@@ -41,12 +42,12 @@ impl Thumbnail {
         })
     }
 
+    #[cfg(feature = "png")]
     /// Gets a png image from the underlying `Thumbnail` pixels.
     ///
     /// # Errors
     ///
     /// - If it wasn't able to save the image.
-    #[cfg(feature = "png")]
     pub fn to_png<P>(&self, path: P) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
@@ -56,6 +57,7 @@ impl Thumbnail {
             height: self.height,
             ..Default::default()
         };
-        png.save(&self.pixels, path)
+
+        Ok(png.save(&self.pixels, path)?)
     }
 }

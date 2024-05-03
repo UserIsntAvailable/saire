@@ -6,8 +6,9 @@ mod traits;
 pub use self::traits::*;
 
 use self::consts::{DEFAULT_BLOCK_SIZE, USER};
-use crate::{polyfill::*, internals::time};
+use crate::{internals::time, polyfill::*};
 use core::{
+    cmp,
     ffi::{c_uchar, CStr},
     fmt,
     mem::{self, MaybeUninit},
@@ -455,8 +456,19 @@ pub struct FatEntry {
 }
 
 impl FatEntry {
+    // TODO(Unvailable): I can make this `pub`, once I clean up the impl.
+    pub(crate) fn new(name: &[u8]) -> Self {
+        let mut this = Self::zeroed();
+        // sets most significant bit
+        this.flags = !(!0 >> 1);
+
+        let max = cmp::min(this.name.len(), name.len());
+        this.name[..max].copy_from_slice(&name[..max]);
+
+        this
+    }
+
     /// Creates a `FatEntry` where every bit is set to zero.
-    #[allow(unused)]
     pub(crate) fn zeroed() -> Self {
         // SAFETY: 64 zero bits is a valid bit pattern for a `FatEntry`.
         unsafe { mem::zeroed() }

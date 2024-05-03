@@ -17,7 +17,6 @@
 use self::safe_transmute::SafeTransmute;
 use crate::internals::time;
 use core::{
-    borrow::Borrow,
     ffi::{c_uchar, CStr},
     fmt, mem,
     ops::Deref,
@@ -69,19 +68,7 @@ block_impl! { DataBlock  => FatEntryArray   = [FatEntry]   }
 /// bytes, instead of their usual copy semantics.
 #[repr(C, /* PERF: align(4096) */)]
 #[derive(Clone, Debug)]
-pub struct VirtualPage(pub(crate) [u8; PAGE_SIZE]);
-
-impl Borrow<[u8; PAGE_SIZE]> for VirtualPage {
-    fn borrow(&self) -> &[u8; PAGE_SIZE] {
-        self
-    }
-}
-
-impl Borrow<[u8; PAGE_SIZE]> for &'_ VirtualPage {
-    fn borrow(&self) -> &[u8; PAGE_SIZE] {
-        self
-    }
-}
+pub struct VirtualPage([u8; PAGE_SIZE]);
 
 impl AsRef<[u8]> for VirtualPage {
     fn as_ref(&self) -> &[u8] {

@@ -76,11 +76,9 @@ impl LayerTable {
                     let kind = LayerKind::new(reader.read_u16()?)?;
                     let tile_height = reader.read_u16()? as u32;
 
-                    // NOTE: Wasting an extra `u32` of memory, by keeping the id
-                    // on both the key and value sides, but 1) it is easier to
-                    // have a type instead of returning (u32, LayerRef), and 2)
-                    // up to an extra 1kB of memory usage is not that big of a
-                    // deal.
+                    // NOTE: Wasting an extra u32 of memory, by keeping the id on both the key and
+                    // value sides, but 1) it is easier to have a type instead of returning (u32,
+                    // LayerRef), and 2) up to an extra 1kB of memory usage is not that big of a deal.
                     Ok((
                         id,
                         LayerRef {
@@ -94,11 +92,6 @@ impl LayerTable {
         })
     }
 
-    /// Returns the number of entries in this table.
-    pub fn len(&self) -> usize {
-        self.map.len()
-    }
-
     /// Gets a (index, [`LayerRef`]) pair of the specified layer `id`.
     pub fn get_full(&self, id: u32) -> Option<(usize, &LayerRef)> {
         self.map
@@ -108,7 +101,7 @@ impl LayerTable {
 
     /// Gets a [`LayerRef`] by index
     ///
-    /// Valid indices are *0 <= index < self.len()*.
+    /// Valid indices are *0 <= index < self.len()* (self.len() <= 254)
     pub fn get_by_index(&self, index: usize) -> Option<&LayerRef> {
         self.map.get_index(index).map(|(_, layer)| layer)
     }
@@ -126,7 +119,8 @@ impl LayerTable {
     ///
     /// # Panics
     ///
-    /// - If any of the of the [`Layer::id`]'s is not found in the [`LayerTable`].
+    /// - If any of the of the [`Layer::id`]'s is not available in the
+    /// [`LayerTable`] ("id is found").
     pub fn sort_layers(&self, layers: &mut Vec<Layer>) {
         // TODO(Unavailable): would sort_by_key/sort_unstable_by_key work here?
         layers.sort_by_cached_key(|e| self.map.get_full(&e.id).expect("id is found").0);
