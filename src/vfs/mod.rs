@@ -1,11 +1,12 @@
-pub(crate) mod reader;
-pub(crate) mod traverser;
+mod reader;
+mod traverser;
+
+pub(crate) use self::{reader::*, traverser::*};
 
 use crate::cipher::{DataBlock, TableBlock, VirtualPage, BLOCKS_PER_SECTOR, PAGE_SIZE};
 use std::{
     cell::RefCell,
     collections::HashMap,
-    convert::AsRef,
     fs::File,
     io::{BufReader, Cursor, Read, Seek},
 };

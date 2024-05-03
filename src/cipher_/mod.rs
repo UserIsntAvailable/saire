@@ -6,7 +6,7 @@ mod traits;
 pub use self::traits::*;
 
 use self::consts::{DEFAULT_BLOCK_SIZE, USER};
-use crate::{polyfill::*, utils::time};
+use crate::{polyfill::*, internals::time};
 use core::{
     ffi::{c_uchar, CStr},
     fmt,
@@ -596,7 +596,7 @@ fn sub<const S: Sbox>(val: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::tests::SAMPLE as BYTES;
+    use crate::internals::tests::SAMPLE as BYTES;
 
     const TABLE_INDEX: u32 = 0;
     const ROOT_INDEX: usize = 2;

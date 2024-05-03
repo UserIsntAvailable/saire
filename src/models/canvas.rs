@@ -1,4 +1,5 @@
-use super::{FatEntryReader, FormatError, Result};
+use crate::internals::binreader::BinReader;
+use std::io::{self, Read};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,15 +11,13 @@ pub enum SizeUnit {
 }
 
 impl SizeUnit {
-    fn new(value: u16) -> Result<Self> {
-        use SizeUnit as S;
-
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
-            0 => S::Pixels,
-            1 => S::Inch,
-            2 => S::Centimeters,
-            3 => S::Milimeters,
-            _ => return Err(FormatError::Invalid.into()),
+            0 => Self::Pixels,
+            1 => Self::Inch,
+            2 => Self::Centimeters,
+            3 => Self::Milimeters,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -33,13 +32,30 @@ pub enum ResolutionUnit {
 }
 
 impl ResolutionUnit {
-    fn new(value: u16) -> Result<Self> {
-        use ResolutionUnit as U;
-
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
-            0 => U::PixelsInch,
-            1 => U::PixelsCm,
-            _ => return Err(FormatError::Invalid.into()),
+            0 => Self::PixelsInch,
+            1 => Self::PixelsCm,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
+        })
+    }
+}
+
+enum StreamTag {
+    Reso,
+    Wsrc,
+    Layr,
+}
+
+impl TryFrom<[u8; 4]> for StreamTag {
+    type Error = io::Error;
+
+    fn try_from(value: [u8; 4]) -> io::Result<Self> {
+        Ok(match &value {
+            b"reso" => Self::Reso,
+            b"wsrc" => Self::Wsrc,
+            b"layr" => Self::Layr,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -66,11 +82,15 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
-        let alignment = reader.read_u32()?;
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
 
+        let alignment = reader.read_u32()?;
         if alignment != 16 {
-            return Err(FormatError::Invalid.into());
+            return Err(io::ErrorKind::InvalidData.into());
         }
 
         let width = reader.read_u32()?;
@@ -87,11 +107,13 @@ impl Canvas {
             selected_layer: None,
         };
 
-        // SAFETY: all fields have been read.
-        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
-            match unsafe { std::str::from_utf8_unchecked(&tag) } {
-                "reso" => {
+        while let Some((tag, size)) = reader.read_stream_header().transpose()? {
+            let Some(tag) = tag else {
+                reader.skip(size as usize)?;
+                continue;
+            };
+            match tag {
+                StreamTag::Reso => {
                     // Conversion from 16.16 fixed point integer to a float.
                     let _ = canvas
                         .dots_per_inch
@@ -105,9 +127,8 @@ impl Canvas {
                     let resolution_unit = ResolutionUnit::new(resolution_unit)?;
                     let _ = canvas.resolution_unit.insert(resolution_unit);
                 }
-                "wsrc" => drop(canvas.selection_source.insert(reader.read_u32()?)),
-                "layr" => drop(canvas.selected_layer.insert(reader.read_u32()?)),
-                _ => reader.read_exact(&mut vec![0; size as usize])?,
+                StreamTag::Wsrc => _ = canvas.selection_source.insert(reader.read_u32()?),
+                StreamTag::Layr => _ = canvas.selected_layer.insert(reader.read_u32()?),
             }
         }
 

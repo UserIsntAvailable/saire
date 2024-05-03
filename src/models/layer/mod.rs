@@ -1,14 +1,18 @@
 mod table;
 
-use super::{FatEntryReader, FormatError, Result};
-use crate::cipher::PAGE_SIZE;
+pub use self::table::{LayerRef, LayerTable};
+
+use crate::{
+    cipher::PAGE_SIZE,
+    internals::{binreader::BinReader, image::PngImage},
+    pixel_ops::premultiplied_to_straight,
+};
 use itertools::Itertools;
 use std::{
     cmp::Ordering,
-    ffi::{c_uchar, CStr},
+    ffi::CStr,
+    io::{self, Read},
 };
-
-pub use table::{LayerRef, LayerTable};
 
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,18 +32,16 @@ pub enum LayerKind {
 }
 
 impl LayerKind {
-    fn new(value: u16) -> Result<Self> {
-        use LayerKind as K;
-
+    fn new(value: u16) -> io::Result<Self> {
         Ok(match value {
-            0 => K::RootLayer,
-            3 => K::Regular,
-            4 => K::_Unknown4,
-            5 => K::Linework,
-            6 => K::Mask,
-            7 => K::_Unknown7,
-            8 => K::Set,
-            _ => return Err(FormatError::Invalid.into()),
+            0 => Self::RootLayer,
+            3 => Self::Regular,
+            4 => Self::_Unknown4,
+            5 => Self::Linework,
+            6 => Self::Mask,
+            7 => Self::_Unknown7,
+            8 => Self::Set,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -59,21 +61,19 @@ pub enum BlendingMode {
 }
 
 impl BlendingMode {
-    fn new(bytes: [c_uchar; 4]) -> Result<Self> {
-        use BlendingMode as B;
-
-        // SAFETY: bytes guarantees to have valid UTF-8 ( ASCII ) values.
-        Ok(match unsafe { std::str::from_utf8_unchecked(&bytes) } {
-            "pass" => B::PassThrough,
-            "norm" => B::Normal,
-            "mul " => B::Multiply,
-            "scrn" => B::Screen,
-            "over" => B::Overlay,
-            "add " => B::Luminosity,
-            "sub " => B::Shade,
-            "adsb" => B::LumiShade,
-            "cbin" => B::Binary,
-            _ => return Err(FormatError::Invalid.into()),
+    fn new(mut buf: [u8; 4]) -> io::Result<Self> {
+        buf.reverse();
+        Ok(match &buf {
+            b"pass" => Self::PassThrough,
+            b"norm" => Self::Normal,
+            b"mul " => Self::Multiply,
+            b"scrn" => Self::Screen,
+            b"over" => Self::Overlay,
+            b"add " => Self::Luminosity,
+            b"sub " => Self::Shade,
+            b"adsb" => Self::LumiShade,
+            b"cbin" => Self::Binary,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
         })
     }
 }
@@ -101,14 +101,14 @@ pub enum TextureName {
 }
 
 impl TextureName {
-    fn new(name: &str) -> Result<Self> {
-        match name {
-            "Watercolor A" => Ok(Self::WatercolorA),
-            "Watercolor B" => Ok(Self::WatercolorB),
-            "Paper" => Ok(Self::Paper),
-            "Canvas" => Ok(Self::Canvas),
-            _ => Err(FormatError::Invalid.into()),
-        }
+    fn new(name: &str) -> io::Result<Self> {
+        Ok(match name {
+            "Watercolor A" => Self::WatercolorA,
+            "Watercolor B" => Self::WatercolorB,
+            "Paper" => Self::Paper,
+            "Canvas" => Self::Canvas,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
+        })
     }
 }
 
@@ -146,6 +146,33 @@ impl Default for Effect {
             opacity: 100,
             width: 15,
         }
+    }
+}
+
+enum StreamTag {
+    Name,
+    Pfid,
+    Plid,
+    Fopn,
+    Texn,
+    Texp,
+    Peff,
+}
+
+impl TryFrom<[u8; 4]> for StreamTag {
+    type Error = io::Error;
+
+    fn try_from(value: [u8; 4]) -> io::Result<Self> {
+        Ok(match &value {
+            b"name" => Self::Name,
+            b"pfid" => Self::Pfid,
+            b"plid" => Self::Plid,
+            b"fopn" => Self::Fopn,
+            b"texn" => Self::Texn,
+            b"texp" => Self::Texp,
+            b"peff" => Self::Peff,
+            _ => return Err(io::ErrorKind::InvalidData.into()),
+        })
     }
 }
 
@@ -195,13 +222,15 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub(crate) fn new(
-        reader: &mut FatEntryReader<'_>,
-        decompress_layer_data: bool,
-    ) -> Result<Self> {
+    pub fn from_reader<R>(reader: &mut R, decompress_data: bool) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let kind = reader.read_u32()?;
-        let kind: u16 = kind.try_into().map_err(|_| FormatError::Invalid)?;
-        let kind = LayerKind::new(kind)?;
+        #[allow(clippy::cast_lossless)]
+        let kind = LayerKind::new(kind as u16)?;
 
         let id = reader.read_u32()?;
         let bounds = LayerBounds {
@@ -217,8 +246,7 @@ impl Layer {
         let clipping = reader.read_bool()?;
         let _ = reader.read_u8()?;
 
-        let mut blending_mode = reader.read_array::<4>()?;
-        blending_mode.reverse();
+        let blending_mode = reader.read_array()?;
         let blending_mode = BlendingMode::new(blending_mode)?;
 
         let mut layer = Self {
@@ -239,31 +267,34 @@ impl Layer {
             data: None,
         };
 
-        // SAFETY: all fields have been read.
-        while let Some((tag, size)) = unsafe { reader.read_next_stream_header() } {
-            // SAFETY: tag guarantees to have valid UTF-8 ( ASCII ) values.
-            match unsafe { std::str::from_utf8_unchecked(&tag) } {
-                "name" => {
+        while let Some((tag, size)) = reader.read_stream_header().transpose()? {
+            let Some(tag) = tag else {
+                reader.skip(size as usize)?;
+                continue;
+            };
+            match tag {
+                StreamTag::Name => {
                     let name = reader.read_array::<256>()?;
                     let name = CStr::from_bytes_until_nul(&name)
                         .expect("contains null character")
                         .to_owned()
                         .into_string()
+                        // FIX(Unavailable): I'm pretty sure the names can be UTF-16, specially
+                        // because we are talking about windows here...
                         .expect("UTF-8");
-
                     let _ = layer.name.insert(name);
                 }
-                "pfid" => drop(layer.parent_set.insert(reader.read_u32()?)),
-                "plid" => drop(layer.parent_layer.insert(reader.read_u32()?)),
-                "fopn" => drop(layer.open.insert(reader.read_bool()?)),
-                "texn" => {
+                StreamTag::Pfid => _ = layer.parent_set.insert(reader.read_u32()?),
+                StreamTag::Plid => _ = layer.parent_layer.insert(reader.read_u32()?),
+                StreamTag::Fopn => _ = layer.open.insert(reader.read_bool()?),
+                StreamTag::Texn => {
                     let buf = reader.read_array::<64>()?;
                     let name = String::from_utf8_lossy(&buf);
                     let name = TextureName::new(name.trim_end_matches('\0'))?;
 
                     layer.texture.get_or_insert_with(Default::default).name = name;
                 }
-                "texp" => {
+                StreamTag::Texp => {
                     // This values are always set, even if `texn` isn't.
                     let scale = reader.read_u16()?;
                     let opacity = reader.read_u8()?;
@@ -273,23 +304,21 @@ impl Layer {
                         texture.opacity = opacity;
                     };
                 }
-                "peff" => {
+                StreamTag::Peff => {
                     let enabled = reader.read_bool()?;
                     let opacity = reader.read_u8()?;
                     let width = reader.read_u8()?;
 
                     if enabled {
                         let _ = layer.effect.insert(Effect { opacity, width });
-                    }
+                    };
                 }
-                _ => reader.read_exact(&mut vec![0; size as usize])?,
             }
         }
 
-        if decompress_layer_data && kind == LayerKind::Regular {
+        if decompress_data && matches!(kind, LayerKind::Regular) {
             let dimensions = (bounds.width as usize, bounds.height as usize);
-            let data = decompress_layer(dimensions, reader)?;
-            let _ = layer.data.insert(data);
+            let _ = layer.data.insert(decompress(&mut reader, dimensions)?);
         };
 
         Ok(layer)
@@ -301,10 +330,11 @@ impl Layer {
     /// # Examples
     ///
     /// ```no_run
-    /// use saire::{SaiDocument, Result, doc::layer::LayerKind};
+    /// use saire::{Sai, models::layer::LayerKind};
+    /// use std::io;
     ///
-    /// fn main() -> Result<()> {
-    ///     let layers = SaiDocument::new_unchecked("my_sai_file").layers()?;
+    /// fn main() -> io::Result<()> {
+    ///     let layers = Sai::new_unchecked("my_sai_file").layers()?;
     ///     let layer = &layers[0];
     ///
     ///     if layer.kind == LayerKind::Regular {
@@ -324,12 +354,10 @@ impl Layer {
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
     // TODO(Unavailable): size_hint: Option<SizeHint>
-    pub fn to_png<P>(&self, path: Option<P>) -> Result<()>
+    pub fn to_png<P>(&self, path: Option<P>) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
     {
-        use crate::utils::{image::PngImage, pixel_ops::premultiplied_to_straight};
-
         if let Some(ref image_data) = self.data {
             let png = PngImage {
                 width: self.bounds.width,
@@ -391,10 +419,10 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-fn decompress_layer(
-    (width, height): (usize, usize),
-    reader: &mut FatEntryReader<'_>,
-) -> Result<Vec<u8>> {
+fn decompress<R>(reader: &mut BinReader<R>, (width, height): (usize, usize)) -> io::Result<Vec<u8>>
+where
+    R: Read,
+{
     const TILE_SIZE: usize = 32;
 
     let tile_map_height = height / TILE_SIZE;
@@ -417,9 +445,17 @@ fn decompress_layer(
     {
         // Reads BGRA channels. Skip the next 4 ( unknown )
         for channel in 0..8 {
-            let size: usize = reader.read_u16()?.into();
-            reader.read_with_size(&mut rle_src, size)?;
+            let size = reader.read_u16()?.into();
+            let Some(buf) = rle_src.get_mut(..size) else {
+                return Err(io::ErrorKind::InvalidData.into());
+            };
+            reader.read_exact(buf)?;
 
+            // TODO(Unavailable): I can use `reader.skip()` when `channel >= 4`.
+            //
+            // It might generate better codegen, because LLVM would be able to
+            // realize that the `read` buffer is not used and remove any
+            // copying involved.
             if channel < 4 {
                 rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
             }
