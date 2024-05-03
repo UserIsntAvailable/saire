@@ -191,6 +191,24 @@ impl TableBlock {
         inner(bytes.into(), index)
     }
 
+    pub fn decrypt_unchecked<B>(bytes: B, index: u32) -> Self
+    where
+        B: Into<VirtualPage>,
+    {
+        fn inner(page: VirtualPage, index: u32) -> TableBlock {
+            let mut data: [u32; 1024] = page.safe_transmute();
+
+            data.iter_mut().fold(index, |prev, curr| {
+                let key = prev ^ *curr ^ mask(prev);
+                mem::replace(curr, key.rotate_left(16))
+            });
+
+            data.safe_transmute()
+        }
+
+        inner(bytes.into(), index)
+    }
+
     /// Encrypts the contents of this `TableBlock`.
 
     // NOTE(rev-eng): I can't seriously believe that you are forced to keep
