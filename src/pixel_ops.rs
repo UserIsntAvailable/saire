@@ -2,12 +2,15 @@ use std::cmp::Ordering;
 
 /// Converts from RGBA `pre-multiplied alpha` to RGBA `straight` color format.
 pub fn premultiplied_to_straight(pixels: &[u8]) -> Vec<u8> {
+    assert!(pixels.len() % 4 == 0);
+
     pixels
         .chunks_exact(4)
         .flat_map(|chunk| {
             let scale = chunk[3] as f32 / 255.0;
 
-            let mut quad_pixel = i32::from_le_bytes(chunk.try_into().expect("chunk_exact(4)"));
+            let quad_pixel = chunk.try_into().expect("chunk_exact(4)");
+            let mut quad_pixel = i32::from_le_bytes(quad_pixel);
             for c in 0..3 {
                 let mut cur_channel = quad_pixel >> (c * 8);
                 cur_channel &= 255;

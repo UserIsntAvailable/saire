@@ -1,12 +1,10 @@
-#![allow(unused_variables)]
-#![feature(stmt_expr_attributes, core_intrinsics)]
-
 use saire::{
-    doc::layer::{BlendingMode, LayerKind},
-    utils::{image::PngImage, pixel_ops::*},
-    Result, SaiDocument,
+    internals::image::PngImage,
+    models::layer::{BlendingMode, LayerKind},
+    pixel_ops::*,
+    Sai,
 };
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, io, path::PathBuf};
 
 // TODO: Instead of using `rotate_{left,right}` I could instead use `slice::ptr_rotate()`.
 
@@ -25,11 +23,11 @@ fn rotate_right(bytes: &mut [u8], mid: usize) {
 
 // TODO: clap
 // TODO: indicatif
-fn main() -> Result<()> {
+fn main() -> io::Result<()> {
     let mut args = std::env::args().skip(1).take(2);
 
     let input = args.next().expect("expected input sai file.");
-    let doc = SaiDocument::new_unchecked(&input);
+    let doc = Sai::new_unchecked(&input);
 
     let output = args.next().unwrap_or_else(|| {
         format!(

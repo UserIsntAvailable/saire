@@ -2,8 +2,10 @@
 // yet how I will implement the caching logic; Since, it is not needed for it to reverse engineer
 // the file format, I will work it latter on.
 
-use super::FileSystemReader;
-use crate::block::{FatEntry, FatKind};
+use crate::{
+    cipher::{FatEntry, FatKind},
+    vfs::FileSystemReader,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TraverseEvent {
@@ -51,7 +53,7 @@ fn traverse_data(
                 break;
             }
 
-            match entry.kind() {
+            match entry.kind()? {
                 FatKind::File => {
                     if on_traverse(TraverseEvent::File, entry) {
                         return Some(entry.to_owned());
@@ -82,21 +84,22 @@ fn traverse_data(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        block::{FatEntry, FatKind},
-        utils::tests::SAMPLE as BYTES,
-    };
-    use eyre::Result;
+    use crate::internals::tests::SAMPLE as BYTES;
     use std::{
         cell::{Cell, RefCell},
         fmt::Display,
+        io,
     };
+    // TODO: This is useless ('<', '^', '>'). std formatter can _apparently_ already do it.
     use tabular::{Row, Table};
 
     #[test]
     // Cool tree view of the underlying sai file system. Keeping it here to make sure the file is being read correctly :).
-    fn traverser_works() -> Result<()> {
-        #[rustfmt::skip] struct TreeVisitor { depth: Cell<usize>, table: RefCell<Table> }
+    fn traverser_works() -> io::Result<()> {
+        struct TreeVisitor {
+            depth: Cell<usize>,
+            table: RefCell<Table>,
+        }
 
         impl TreeVisitor {
             fn visit(&self, action: TraverseEvent, entry: &FatEntry) -> bool {
@@ -115,28 +118,29 @@ mod tests {
             }
 
             fn add_row(&self, entry: &FatEntry) {
-                let date =
-                    chrono::NaiveDateTime::from_timestamp_opt(entry.timestamp_unix() as i64, 0)
-                        .expect("timestamp is not out-of-bounds.")
-                        .format("%Y-%m-%d");
+                let date = chrono::NaiveDateTime::from_timestamp_opt(entry.unixtime() as i64, 0)
+                    .expect("timestamp is not out-of-bounds.")
+                    .format("%Y-%m-%d");
 
-                self.table.borrow_mut().add_row(match entry.kind() {
-                    FatKind::Folder => Row::new()
-                        .with_cell("")
-                        .with_cell("d")
-                        .with_cell(date)
-                        .with_cell(format!("{}/", entry.name())),
-                    FatKind::File => Row::new()
-                        .with_cell(entry.size())
-                        .with_cell("f")
-                        .with_cell(date)
-                        .with_cell(format!(
-                            "{empty: >width$}{}",
-                            entry.name(),
-                            empty = "",
-                            width = self.depth.get()
-                        )),
-                });
+                self.table
+                    .borrow_mut()
+                    .add_row(match entry.kind().unwrap() {
+                        FatKind::Folder => Row::new()
+                            .with_cell("")
+                            .with_cell("d")
+                            .with_cell(date)
+                            .with_cell(format!("{}/", entry.name().unwrap_or("<invalid>"))),
+                        FatKind::File => Row::new()
+                            .with_cell(entry.size())
+                            .with_cell("f")
+                            .with_cell(date)
+                            .with_cell(format!(
+                                "{empty: >width$}{}",
+                                entry.name().unwrap_or("<invalid>"),
+                                empty = "",
+                                width = self.depth.get()
+                            )),
+                    });
             }
         }
 
@@ -175,11 +179,11 @@ mod tests {
 
     #[test]
     fn traverser_returns_stopped_entry() {
-        const EXPECTED: &str = "canvas";
+        const EXPECTED_ENTRY_NAME: &str = "canvas";
 
-        let actual = FileSystemReader::from(BYTES).traverse_root(|_, i| i.name() == EXPECTED);
+        let actual = FileSystemReader::from(BYTES)
+            .traverse_root(|_, entry| entry.name().is_some_and(|name| name == EXPECTED_ENTRY_NAME));
 
-        assert!(actual.is_some());
-        assert_eq!(actual.unwrap().name(), EXPECTED);
+        assert_eq!(actual.unwrap().name().unwrap(), EXPECTED_ENTRY_NAME);
     }
 }

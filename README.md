@@ -13,9 +13,9 @@ projects is that `saire` can read `Layer` data, but it is still pretty
 
 ## API Design
 
-For the moment, only a single struct ( `SaiDocument` ) provides access to get
-information about a sai file. I will probably provide access to the low level
-APIs, but for now I want to clean up the code before doing so.
+For the moment, only a single struct ( `Sai` ) provides access to get information
+about a sai file. I will probably provide access to the low level APIs, but for
+now I want to clean up the code before doing so.
 
 I might create a `bin` crate later on, but right now it would not be that useful.
 

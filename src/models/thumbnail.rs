@@ -1,4 +1,5 @@
-use super::{FatEntryReader, FormatError, Result};
+use crate::internals::{binreader::BinReader, image::PngImage};
+use std::io::{self, Read};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Thumbnail {
@@ -11,18 +12,22 @@ pub struct Thumbnail {
 }
 
 impl Thumbnail {
-    pub(super) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
         let width = reader.read_u32()?;
         let height = reader.read_u32()?;
 
-        let magic = reader.read_array::<4>()?;
-
+        let magic = reader.read_array()?;
         if &magic != b"BM32" {
-            return Err(FormatError::Invalid.into());
+            return Err(io::ErrorKind::InvalidData.into());
         }
 
         let pixels_len = (width * height * 4) as usize;
-        let mut pixels = vec![0u8; pixels_len];
+        let mut pixels = vec![0; pixels_len];
         reader.read_exact(pixels.as_mut_slice())?;
 
         pixels
@@ -36,22 +41,21 @@ impl Thumbnail {
         })
     }
 
-    #[cfg(feature = "png")]
     /// Gets a png image from the underlying `Thumbnail` pixels.
     ///
     /// # Errors
     ///
     /// - If it wasn't able to save the image.
-    pub fn to_png<P>(&self, path: P) -> Result<()>
+    #[cfg(feature = "png")]
+    pub fn to_png<P>(&self, path: P) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
     {
-        let png = crate::utils::image::PngImage {
+        let png = PngImage {
             width: self.width,
             height: self.height,
             ..Default::default()
         };
-
-        Ok(png.save(&self.pixels, path)?)
+        png.save(&self.pixels, path)
     }
 }

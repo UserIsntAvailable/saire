@@ -1,7 +1,8 @@
 use super::{Layer, LayerKind};
-use crate::{fs::reader::FatEntryReader, Result};
+use crate::internals::binreader::BinReader;
 use indexmap::{map::IntoIter as MapIntoIter, IndexMap};
 use std::{
+    io::{self, Read},
     iter::{self, FusedIterator},
     ops::Index,
 };
@@ -30,12 +31,13 @@ use std::{
 /// # Examples
 ///
 /// ```no_run
-/// use saire::{SaiDocument, Result};
+/// use saire::Sai;
+/// use std::io;
 ///
-/// fn main() -> Result<()> {
-///     let doc = SaiDocument::new_unchecked("my_sai_file.sai");
-///     // subtbl works the same in the same way.
-///     let laytbl = doc.laytbl()?;
+/// fn main() -> io::Result<()> {
+///     let sai = Sai::new_unchecked("my_sai_file.sai");
+///     // subtbl works in the same way.
+///     let laytbl = sai.laytbl()?;
 ///
 ///     // id = 2 is `usually` the first layer.
 ///     assert_eq!(laytbl.get_index_of(2), Some(0));
@@ -62,7 +64,11 @@ pub struct LayerRef {
 }
 
 impl LayerTable {
-    pub(crate) fn new(reader: &mut FatEntryReader<'_>) -> Result<Self> {
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
         Ok(LayerTable {
             map: (0..reader.read_u32()?)
                 .map(|_| {
@@ -70,9 +76,11 @@ impl LayerTable {
                     let kind = LayerKind::new(reader.read_u16()?)?;
                     let tile_height = reader.read_u16()? as u32;
 
-                    // wasting, an extra u32, by keeping the id on both key and value sides, but 1)
-                    // it is easier to have a type instead of returning (u32, LayerRef), and 2) up
-                    // to an extra 1kB of memory usage is not that big of a deal.
+                    // NOTE: Wasting an extra `u32` of memory, by keeping the id
+                    // on both the key and value sides, but 1) it is easier to
+                    // have a type instead of returning (u32, LayerRef), and 2)
+                    // up to an extra 1kB of memory usage is not that big of a
+                    // deal.
                     Ok((
                         id,
                         LayerRef {
@@ -82,8 +90,13 @@ impl LayerTable {
                         },
                     ))
                 })
-                .collect::<Result<_>>()?,
+                .collect::<io::Result<_>>()?,
         })
+    }
+
+    /// Returns the number of entries in this table.
+    pub fn len(&self) -> usize {
+        self.map.len()
     }
 
     /// Gets a (index, [`LayerRef`]) pair of the specified layer `id`.
@@ -95,7 +108,7 @@ impl LayerTable {
 
     /// Gets a [`LayerRef`] by index
     ///
-    /// Valid indices are *0 <= index < self.len()* (self.len() <= 254)
+    /// Valid indices are *0 <= index < self.len()*.
     pub fn get_by_index(&self, index: usize) -> Option<&LayerRef> {
         self.map.get_index(index).map(|(_, layer)| layer)
     }
@@ -113,8 +126,7 @@ impl LayerTable {
     ///
     /// # Panics
     ///
-    /// - If any of the of the [`Layer::id`]'s is not available in the
-    /// [`LayerTable`] ("id is found").
+    /// - If any of the of the [`Layer::id`]'s is not found in the [`LayerTable`].
     pub fn sort_layers(&self, layers: &mut Vec<Layer>) {
         // TODO(Unavailable): would sort_by_key/sort_unstable_by_key work here?
         layers.sort_by_cached_key(|e| self.map.get_full(&e.id).expect("id is found").0);
@@ -152,12 +164,10 @@ pub struct IntoIter {
     iter: iter::Enumerate<MapIntoIter<u32, LayerRef>>,
 }
 
-impl IntoIter {
-    fn to_index_layer_ref_pair(
-        (index, (_key, value)): (usize, (u32, LayerRef)),
-    ) -> (usize, LayerRef) {
-        (index, value)
-    }
+fn into_index_layer_ref_pair(
+    (index, (_key, value)): (usize, (u32, LayerRef)),
+) -> (usize, LayerRef) {
+    (index, value)
 }
 
 impl Iterator for IntoIter {
@@ -165,19 +175,19 @@ impl Iterator for IntoIter {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(Self::to_index_layer_ref_pair)
+        self.iter.next().map(into_index_layer_ref_pair)
     }
 }
 
 impl DoubleEndedIterator for IntoIter {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.iter.next_back().map(Self::to_index_layer_ref_pair)
+        self.iter.next_back().map(into_index_layer_ref_pair)
     }
 
     #[inline]
     fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
-        self.iter.nth_back(n).map(Self::to_index_layer_ref_pair)
+        self.iter.nth_back(n).map(into_index_layer_ref_pair)
     }
 }
 
