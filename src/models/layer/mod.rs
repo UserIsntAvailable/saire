@@ -80,8 +80,9 @@ impl BlendingMode {
 
 /// Rectangular bounds
 ///
-/// Can be off-canvas or larger than canvas if the user moves the layer outside of the `canvas window`
-/// without cropping; similar to `Photoshop`, 0:0 is top-left corner of image.
+/// Can be off-canvas or larger than canvas if the user moves the layer outside
+/// of the `canvas window` without cropping; similar to `Photoshop`, 0:0 is
+/// top-left corner of image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LayerBounds {
     pub x: i32,
@@ -324,7 +325,6 @@ impl Layer {
         Ok(layer)
     }
 
-    #[cfg(feature = "png")]
     /// Gets a png image from the underlying layer data.
     ///
     /// # Examples
@@ -353,7 +353,9 @@ impl Layer {
     /// # Panics
     ///
     /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
+
     // TODO(Unavailable): size_hint: Option<SizeHint>
+    #[cfg(feature = "png")]
     pub fn to_png<P>(&self, path: Option<P>) -> io::Result<()>
     where
         P: AsRef<std::path::Path>,
@@ -376,7 +378,7 @@ impl Layer {
                 |path| path.as_ref().to_path_buf(),
             );
 
-            return Ok(png.save(&premultiplied_to_straight(image_data), path)?);
+            return png.save(&premultiplied_to_straight(image_data), path);
         }
 
         panic!("For now, saire can only decompress LayerKind::Regular data.");
@@ -388,31 +390,25 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     const STRIDE_COUNT: usize = PAGE_SIZE / STRIDE;
 
     let mut src = src.iter();
-    let mut dst = dst.iter_mut();
+    let mut dst = dst.iter_mut().step_by(STRIDE);
     let mut src = || src.next().expect("src has items");
-    let mut dst = || {
-        let value = dst.next().expect("dst has items");
-        dst.nth(STRIDE - 2); // This would the same as calling `next()` 3 times.
-        value
-    };
+    let mut dst = || dst.next().expect("dst has items");
 
-    let mut wrote = 0;
-    while wrote < STRIDE_COUNT {
-        let length = *src() as usize;
+    let mut read = 0;
+    while read < STRIDE_COUNT {
+        let len = *src() as usize;
 
-        wrote += match length.cmp(&128) {
+        read += match len.cmp(&128) {
             Ordering::Less => {
-                let length = length + 1;
-                (0..length).for_each(|_| *dst() = *src());
-
-                length
+                let len = len + 1;
+                (0..len).for_each(|_| *dst() = *src());
+                len
             }
             Ordering::Greater => {
-                let length = (length ^ 255) + 2;
-                let value = *src();
-                (0..length).for_each(|_| *dst() = value);
-
-                length
+                let len = (len ^ 255) + 2;
+                let val = *src();
+                (0..len).for_each(|_| *dst() = val);
+                len
             }
             Ordering::Equal => 0,
         }
