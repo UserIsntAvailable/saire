@@ -53,28 +53,16 @@ impl<Drv> Read for PageCursor<Drv>
 where
     Drv: Driver,
 {
-    /// This implementation would always read exactly `buf.len()` bytes.
-    ///
-    /// In other words, `self.read()? == buf.len()` would be always `true`.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let len = buf.len();
-        let mut read = len;
+        let buf_len = buf.len();
+        let mut pos = 0;
 
-        // TODO(Unavailable): Allow non-exact reads?
-        //
-        // ```
-        // let page_len = self.page.as_ref().len();
-        // while self.pos != page_len || self.next_page.is_some() {
-        //     // ...
-        // }
-        // Ok(len - read)
-        // ```
-        while read != 0 {
-            let len = self.page.as_ref().len();
+        while pos < buf_len {
+            let page_len = self.page.as_ref().len();
 
-            if self.pos == len {
+            if self.pos == page_len {
                 let Some(next_page) = self.next_page else {
-                    return Err(io::ErrorKind::UnexpectedEof.into());
+                    return Ok(pos);
                 };
                 self.update_and_reset(self.driver.get(next_page.get())?);
             };
@@ -93,27 +81,31 @@ where
             //
             // You can see the asm diff here: https://godbolt.org/z/69v1fxqsa
 
-            let amt = cmp::min(read, len - self.pos);
+            let amt = cmp::min(buf_len - pos, page_len - self.pos);
 
             let src = self.page.as_ref();
             // PERF: `self.pos..` bounds-check is not being optimized out...
             let src = &src[self.pos..][..amt];
 
-            read -= amt;
-            self.pos += amt;
-
-            let dst = unsafe { buf.get_unchecked_mut(read..) };
+            let dst = unsafe { buf.get_unchecked_mut(pos..) };
             let dst = unsafe { dst.get_unchecked_mut(..amt) };
+
+            pos += amt;
+            self.pos += amt;
 
             dst.copy_from_slice(src)
         }
 
-        Ok(len)
+        Ok(buf_len)
     }
 
     #[inline]
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.read(buf).map(|_| ())
+        if self.read(buf)? == buf.len() {
+            Ok(())
+        } else {
+            Err(io::ErrorKind::UnexpectedEof.into())
+        }
     }
 }
 
