@@ -18,13 +18,12 @@
 
 pub mod cipher;
 pub mod cipher_;
-pub mod models;
-pub mod models_;
 pub mod sai;
 pub mod sai_;
 pub mod vfs;
 pub mod vfs_;
 
+pub mod models;
 pub mod pixel_ops;
 
 mod internals;
