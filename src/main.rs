@@ -1,8 +1,11 @@
+#![allow(unused_imports)]
+
 use saire::{
     internals::image::PngImage,
     models::layer::{BlendingMode, LayerKind},
     pixel_ops::*,
-    Sai,
+    sai_::Sai as NewSai,
+    Sai as OldSai,
 };
 use std::{collections::HashSet, io, path::PathBuf};
 
@@ -27,7 +30,9 @@ fn main() -> io::Result<()> {
     let mut args = std::env::args().skip(1).take(2);
 
     let input = args.next().expect("expected input sai file.");
-    let doc = Sai::new_unchecked(&input);
+    // let doc = OldSai::new_unchecked(&input);
+    let buf = std::fs::read(&input)?;
+    let doc = NewSai::new_unchecked(&buf);
 
     let output = args.next().unwrap_or_else(|| {
         format!(
