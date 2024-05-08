@@ -123,8 +123,8 @@ where
 
     #[inline]
     pub fn decrypt(index: u32, mut buf: [u8; U]) -> Self {
-        let c = Cipher::<Self>::new(index);
-        c.decrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(index);
+        cpr.decrypt(&mut buf);
 
         Self::from_bytes(buf)
     }
@@ -143,8 +143,8 @@ where
     /// [`decrypt`]: [`TableBlock::decrypt`]
     #[inline]
     pub fn checked_decrypt(index: u32, mut buf: [u8; U]) -> Result<Self> {
-        let c = Cipher::<Self>::new(index);
-        c.decrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(index);
+        cpr.decrypt(&mut buf);
 
         let b0 = mem::take(&mut buf[0]);
         let b1 = mem::take(&mut buf[1]);
@@ -156,7 +156,7 @@ where
 
         if expected != actual {
             return Err(ChecksumMismatchError { expected, actual });
-        }
+        };
 
         buf[0] = b0;
         buf[1] = b1;
@@ -173,8 +173,8 @@ where
     #[inline]
     pub fn encrypt(self, index: u32) -> [u8; U] {
         let mut buf = self.into_bytes();
-        let c = Cipher::<Self>::new(index);
-        c.encrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(index);
+        cpr.encrypt(&mut buf);
 
         buf
     }
@@ -256,8 +256,8 @@ where
 
     #[inline]
     pub fn decrypt(checksum: u32, mut buf: [u8; U]) -> Self {
-        let c = Cipher::<Self>::new(checksum);
-        c.decrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(checksum);
+        cpr.decrypt(&mut buf);
 
         Self::from_bytes(buf)
     }
@@ -276,8 +276,8 @@ where
     /// [`decrypt`]: [`DataBlock::decrypt`]
     #[inline]
     pub fn checked_decrypt(checksum: u32, mut buf: [u8; U]) -> Result<Self> {
-        let c = Cipher::<Self>::new(checksum);
-        c.decrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(checksum);
+        cpr.decrypt(&mut buf);
 
         let actual = self::checksum(&buf);
         if checksum != actual {
@@ -285,7 +285,7 @@ where
                 expected: checksum,
                 actual,
             });
-        }
+        };
 
         Ok(Self::from_bytes(buf))
     }
@@ -301,8 +301,8 @@ where
         let mut buf = self.into_bytes();
         let checksum = checksum.unwrap_or_else(|| self::checksum(&buf));
 
-        let c = Cipher::<Self>::new(checksum);
-        c.encrypt(&mut buf);
+        let cpr = Cipher::<Self>::new(checksum);
+        cpr.encrypt(&mut buf);
 
         buf
     }
@@ -369,7 +369,7 @@ impl std::error::Error for ChecksumMismatchError {}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TableEntry {
     pub(crate) checksum: u32,
-    pub(crate) next_block: u32, // TODO: Option<NonZeroU32>.
+    pub(crate) next_block: u32, // TODO(Unavailable): Option<NonZeroU32>.
 }
 
 impl TableEntry {
@@ -396,8 +396,8 @@ impl AsRef<[u8]> for TableEntry {
     // never be to safe.
     fn as_ref<'slice>(&'slice self) -> &'slice [u8] {
         let ptr = self as *const TableEntry as *const u8;
-        // SAFETY: `self` is `repr(C)`, so it is safe to represent a `TableEntry`
-        // as a byte slice.
+        // SAFETY: `self` is `repr(C)` and doesn't have padding bytes, so it is
+        // safe to represent as a slice of bytes.
         unsafe { slice::from_raw_parts::<'slice>(ptr, mem::size_of::<TableEntry>()) }
     }
 }
@@ -407,13 +407,12 @@ impl AsMut<[u8]> for TableEntry {
     // never be to safe.
     fn as_mut<'slice>(&'slice mut self) -> &'slice mut [u8] {
         let ptr = self as *mut TableEntry as *mut u8;
-        // SAFETY: `self` is `repr(C)`, so it is safe to represent a `TableEntry`
-        // as a byte slice.
+        // SAFETY: `self` is `repr(C)` and doesn't have padding bytes, so it is
+        // safe to represent as a slice of bytes.
         unsafe { slice::from_raw_parts_mut::<'slice>(ptr, mem::size_of::<TableEntry>()) }
     }
 }
 
-// NAMING(Unavailable):
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FatKind {
@@ -446,7 +445,7 @@ pub struct FatEntry {
     // with that).
     kind: u8,
     _pad2: u8,
-    next_block: u32, // TODO: Option<NonZeroU32>.
+    next_block: u32, // TODO(Unavailable): Option<NonZeroU32>.
     size: u32,
     filetime: u64, // Windows FILETIME
     // NOTE(rev-eng:libsai): Gets send as a window message.
@@ -457,12 +456,12 @@ pub struct FatEntry {
 impl FatEntry {
     /// Creates a `FatEntry` where every bit is set to zero.
     #[allow(unused)]
-    pub(crate) fn zeroed() -> Self {
-        // SAFETY: 64 zero bits is a valid bit pattern for a `FatEntry`.
+    pub(crate) const fn zeroed() -> Self {
+        // SAFETY: `FATEntry` is a POD struct.
         unsafe { mem::zeroed() }
     }
 
-    /// The bitset (flags) for this entry.
+    /// The flags bitset for this entry.
     ///
     /// I (neither Wunkolo) haven't really looked into what are the possible
     /// values.
@@ -479,21 +478,18 @@ impl FatEntry {
 
     /// The name of this entry.
     ///
-    /// Returns [`None`] if the name does not have valid UTF-8 characters or if
-    /// it is the empty.
-
-    // CONST: `find` and `unwrap_or`.
+    /// Returns [`None`] if the name does not have a nul byte present.
     #[inline]
-    pub fn name(&self) -> Option<&str> {
-        let name = CStr::from_bytes_until_nul(&self.name).ok()?;
-        let name = name.to_str().ok()?;
-        // FIX: For some reason there is `#01` appended to the name on my sample file.
-        (!name.is_empty()).then(|| &name[name.find('.').unwrap_or(0)..])
+    pub const fn name(&self) -> Option<&CStr> {
+        match CStr::from_bytes_until_nul(&self.name) {
+            Ok(n) => Some(n),
+            Err(_) => None,
+        }
     }
 
     /// Whether this entry is a `FatKind::Folder` or `FatKind::File`.
     ///
-    /// Returns [`None`] if it doesn't have valid values for [`FatKind`].
+    /// Returns [`None`] if it doesn't have a valid value for [`FatKind`].
     #[inline]
     pub const fn kind(&self) -> Option<FatKind> {
         match self.kind {
@@ -553,8 +549,8 @@ impl AsRef<[u8]> for FatEntry {
     // never be to safe.
     fn as_ref<'slice>(&'slice self) -> &'slice [u8] {
         let ptr = self as *const FatEntry as *const u8;
-        // SAFETY: `self` is `repr(C)`, so it is safe to represent a `FatEntry`
-        // as a byte slice.
+        // SAFETY: `self` is `repr(C)` and doesn't have padding bytes, so it is
+        // safe to represent as a slice of bytes.
         unsafe { slice::from_raw_parts::<'slice>(ptr, mem::size_of::<FatEntry>()) }
     }
 }
@@ -564,8 +560,8 @@ impl AsMut<[u8]> for FatEntry {
     // never be to safe.
     fn as_mut<'slice>(&'slice mut self) -> &'slice mut [u8] {
         let ptr = self as *mut FatEntry as *mut u8;
-        // SAFETY: `self` is `repr(C)`, so it is safe to represent a `FatEntry`
-        // as a byte slice.
+        // SAFETY: `self` is `repr(C)` and doesn't have padding bytes, so it is
+        // safe to represent as a slice of bytes.
         unsafe { slice::from_raw_parts_mut::<'slice>(ptr, mem::size_of::<FatEntry>()) }
     }
 }
@@ -619,8 +615,9 @@ mod tests {
 
         let entry = &data[0];
 
-        assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
-        assert_eq!(entry.name().unwrap(), ".73851dcd1203b24d");
+        assert_eq!(entry.flags(), 1 << 31);
+        // NOTE(rev-eng): Why #01 is being appended? :/
+        assert_eq!(entry.name().unwrap(), c"#01.73851dcd1203b24d");
         assert_eq!(entry.kind().unwrap(), FatKind::File);
         assert_eq!(entry.next_block(), 3);
         assert_eq!(entry.size(), 32);
@@ -628,8 +625,8 @@ mod tests {
 
         let entry = &data[3];
 
-        assert_eq!(entry.flags(), 0b10000000000000000000000000000000);
-        assert_eq!(entry.name().unwrap(), "layers");
+        assert_eq!(entry.flags(), 1 << 31);
+        assert_eq!(entry.name().unwrap(), c"layers");
         assert_eq!(entry.kind().unwrap(), FatKind::Folder);
         assert_eq!(entry.next_block(), 6);
         assert_eq!(entry.size(), 64); // always 64, because `size_of<FatEntry> == 64`.
