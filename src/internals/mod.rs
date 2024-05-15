@@ -8,7 +8,7 @@ pub mod tests {
     /// Gets the bytes from a file from the "/res" folder.
     macro_rules! resource {
         ($file:literal) => {
-            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/res/", $file))
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/res/", $file)).as_slice()
         };
     }
 

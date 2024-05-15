@@ -4,16 +4,22 @@ pub use self::table::{LayerRef, LayerTable};
 
 use crate::{
     cipher::PAGE_SIZE,
-    internals::{binreader::BinReader, image::PngImage},
+    internals::{
+        binreader::BinReader,
+        image::{ColorType, PngImage},
+    },
     pixel_ops::premultiplied_to_straight,
 };
 use itertools::Itertools;
 use std::{
+    borrow::Cow,
     cmp::Ordering,
     ffi::CStr,
     io::{self, Read},
+    path,
 };
 
+// TODO(Unavailable): Rename to `Kind`.
 #[repr(u16)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
@@ -223,7 +229,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn from_reader<R>(reader: &mut R, decompress_data: bool) -> io::Result<Self>
+    pub(crate) fn new<R>(reader: &mut R, decompress_data: bool) -> io::Result<Self>
     where
         R: Read,
     {
@@ -317,12 +323,25 @@ impl Layer {
             }
         }
 
-        if decompress_data && matches!(kind, LayerKind::Regular) {
+        if decompress_data && matches!(kind, LayerKind::Regular | LayerKind::Mask) {
             let dimensions = (bounds.width as usize, bounds.height as usize);
-            let _ = layer.data.insert(decompress(&mut reader, dimensions)?);
+            let data = match kind {
+                LayerKind::Regular => read_raster_data::<4, _>(&mut reader, dimensions),
+                LayerKind::Mask => read_raster_data::<1, _>(&mut reader, dimensions),
+                _ => unreachable!(),
+            }?;
+            let _ = layer.data.insert(data);
         };
 
         Ok(layer)
+    }
+
+    #[inline]
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        Self::new(reader, true)
     }
 
     /// Gets a png image from the underlying layer data.
@@ -352,24 +371,34 @@ impl Layer {
     ///
     /// # Panics
     ///
-    /// - If invoked with a layer with a kind other than [`LayerKind::Regular`].
+    /// - If invoked with a layer with a kind other than [`LayerKind::Regular`] or
+    /// [`LayerKind::Mask`].
 
     // TODO(Unavailable): size_hint: Option<SizeHint>
     #[cfg(feature = "png")]
     pub fn to_png<P>(&self, path: Option<P>) -> io::Result<()>
     where
-        P: AsRef<std::path::Path>,
+        P: AsRef<path::Path>,
     {
         if let Some(ref image_data) = self.data {
+            let (color, bytes) = match self.kind {
+                LayerKind::Regular => (
+                    ColorType::Rgba,
+                    Cow::Owned(premultiplied_to_straight(image_data)),
+                ),
+                LayerKind::Mask => (ColorType::Grayscale, Cow::Borrowed(image_data)),
+                _ => unreachable!(),
+            };
+
             let png = PngImage {
                 width: self.bounds.width,
                 height: self.bounds.height,
-                ..Default::default()
+                color,
             };
 
             let path = path.map_or_else(
                 || {
-                    std::path::PathBuf::from(format!(
+                    path::PathBuf::from(format!(
                         "{:0>8x}-{}.png",
                         self.id,
                         self.name.as_ref().unwrap()
@@ -378,24 +407,23 @@ impl Layer {
                 |path| path.as_ref().to_path_buf(),
             );
 
-            return png.save(&premultiplied_to_straight(image_data), path);
+            return png.save(&bytes, path);
         }
 
-        panic!("For now, saire can only decompress LayerKind::Regular data.");
+        panic!("For now, saire can only decompress LayerKind::{{Regular,Mask}} data.");
     }
 }
 
-fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
-    const STRIDE: usize = std::mem::size_of::<u32>();
-    const STRIDE_COUNT: usize = PAGE_SIZE / STRIDE;
-
+// PERF(Unavailable): While this function is very elegantly written, using
+// `memcpy` and `memset` would probably yield better results.
+fn rle_decompress<const STRIDE: usize>(dst: &mut [u8], src: &[u8]) {
     let mut src = src.iter();
     let mut dst = dst.iter_mut().step_by(STRIDE);
     let mut src = || src.next().expect("src has items");
     let mut dst = || dst.next().expect("dst has items");
 
     let mut read = 0;
-    while read < STRIDE_COUNT {
+    while read < PAGE_SIZE / STRIDE {
         let len = *src() as usize;
 
         read += match len.cmp(&128) {
@@ -415,10 +443,40 @@ fn rle_decompress_stride(dst: &mut [u8], src: &[u8]) {
     }
 }
 
-fn decompress<R>(reader: &mut BinReader<R>, (width, height): (usize, usize)) -> io::Result<Vec<u8>>
+macro_rules! pos2idx {
+    ($y:expr, $x:expr, $stride:expr) => {
+        $y * $stride + $x
+    };
+}
+
+macro_rules! process_raster_data {
+    ($BPP:expr => $dst:expr, $src:expr) => {{
+        // PERF(Unavailable): Is there any difference between 2 different ifs?
+        if $BPP == 4 {
+            // Swaps BGRA -> RGBA
+            $dst[0] = $src[2];
+            $dst[1] = $src[1];
+            $dst[2] = $src[0];
+            $dst[3] = $src[3];
+        } else if $BPP == 1 {
+            // Mask data is stored within `0..=64`.
+            $dst[0] = ($src[0] * 4).min(255);
+            // $dst[0] = 255.min($src[0] * 4);
+        } else {
+            unsafe { core::hint::unreachable_unchecked() };
+        };
+    }};
+}
+
+fn read_raster_data<const BPP: usize, R>(
+    reader: &mut BinReader<R>,
+    (width, height): (usize, usize),
+) -> io::Result<Vec<u8>>
 where
     R: Read,
 {
+    debug_assert!(BPP == 4 || BPP == 1, "only 8-bit rgba and grayscale");
+
     const TILE_SIZE: usize = 32;
 
     let tile_map_height = height / TILE_SIZE;
@@ -426,54 +484,54 @@ where
 
     let mut tile_map = vec![0; tile_map_height * tile_map_width];
     reader.read_exact(&mut tile_map)?;
+    let tile_map = tile_map; // Prevents `tile_map` to be mutable.
 
-    // Prevents `tile_map` to be mutable.
-    let tile_map = tile_map;
-    let mut pixels = vec![0; width * height * 4];
+    let mut pixels = vec![0; width * height * BPP];
+    // NIGHTLY(const_generic_exprs): This should actually be `BPP * 1024`.
     let mut rle_dst = [0; PAGE_SIZE];
     let mut rle_src = [0; PAGE_SIZE / 2];
 
-    let pos2idx = |y, x, stride| y * stride + x;
-
     for (y, x) in (0..tile_map_height)
         .cartesian_product(0..tile_map_width)
-        .filter(|(y, x)| tile_map[pos2idx(*y, *x, tile_map_width)] != 0)
+        .filter(|(y, x)| tile_map[pos2idx!(y, x, tile_map_width)] != 0)
     {
-        // Reads BGRA channels. Skip the next 4 ( unknown )
-        for channel in 0..8 {
+        // Read the actual pixel's channel (first half). Skip the next half (unknown).
+        for channel in 0..BPP * 2 {
             let size = reader.read_u16()?.into();
             let Some(buf) = rle_src.get_mut(..size) else {
                 return Err(io::ErrorKind::InvalidData.into());
             };
             reader.read_exact(buf)?;
 
-            // TODO(Unavailable): I can use `reader.skip()` when `channel >= 4`.
+            // TODO(Unavailable): Use `reader.skip()` when `channel >= BPP`?
             //
             // It might generate better codegen, because LLVM would be able to
-            // realize that the `read` buffer is not used and remove any
-            // copying involved.
-            if channel < 4 {
-                rle_decompress_stride(&mut rle_dst[channel..], &rle_src);
+            // realize that the `read` buffer is not used and remove any copying
+            // involved.
+            if channel < BPP {
+                rle_decompress::<BPP>(&mut rle_dst[channel..], &rle_src);
             }
         }
 
-        // Leaves pre-multiplied
-        rle_dst.chunks_exact(TILE_SIZE * 4).fold(
-            // Offset of first element on the 32x32 tile within the final image.
-            pos2idx(y * width, x * TILE_SIZE, TILE_SIZE),
+        // SAFETY: `BPP` is always `<= 4`, and `4 * 1024` is `4096`, which is the
+        // size of `rle_dst`.
+        let rle_dst = unsafe { rle_dst.get_unchecked(..BPP * 1024) };
+
+        rle_dst.chunks_exact(TILE_SIZE * BPP).fold(
+            // Offset of the first element for this 32x32 tile.
+            pos2idx!(y * width, x * TILE_SIZE, TILE_SIZE),
             |offset, src| {
-                // Swaps BGRA -> RGBA
-                for (dst, src) in pixels[offset * 4..]
-                    .chunks_exact_mut(4)
-                    .zip(src.chunks_exact(4))
+                for (dst, src) in pixels[offset * BPP..]
+                    .chunks_exact_mut(BPP)
+                    .zip(src.chunks_exact(BPP))
                 {
-                    dst[0] = src[2];
-                    dst[1] = src[1];
-                    dst[2] = src[0];
-                    dst[3] = src[3];
+                    // NOTE: LLVM can't auto-vectorize between functions (even
+                    // when inlining is performed), however a macro copy-pastes
+                    // its contents as is.
+                    process_raster_data!(BPP => dst, src);
                 }
 
-                // Skips `width` bytes to get the next row of the 32x32 tile.
+                // Skips `width` bytes to get the next row.
                 offset + width
             },
         );
