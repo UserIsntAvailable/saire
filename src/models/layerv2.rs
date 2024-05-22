@@ -1,32 +1,22 @@
+// NOTE: I would normally not split these on multiple modules, but having a +1000
+// lines file was kinda terrible.
+mod strategy;
+pub use strategy::*;
+
 use crate::{
-    cipher::PAGE_SIZE,
     internals::{
         binreader::BinReader,
         image::{ColorType::Rgba, PngImage},
     },
     pixel_ops::premultiplied_to_straight,
 };
-use core::{
-    cmp::Ordering,
-    ffi::CStr,
-    fmt::{self, Display},
-    marker::PhantomData,
-    mem::MaybeUninit,
-    num::NonZeroU32,
-    ops::Deref,
-};
-use itertools::Itertools;
+use core::{fmt, marker::PhantomData, num::NonZeroU32};
 use std::{
-    io::{self, Read},
+    io::{self, ErrorKind::InvalidData, Read},
     path::{Path, PathBuf},
-    ptr::addr_of_mut,
 };
 
-const INVALID: io::ErrorKind = io::ErrorKind::InvalidData;
-const UNSUPPORTED: io::ErrorKind = io::ErrorKind::Unsupported;
-
-// TODO(Unavailable): Implement essential traits (Debug, Clone, etc...)
-
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer<K, S, C = ()>
 where
     K: Kind,
@@ -56,11 +46,90 @@ where
     }
 }
 
-impl<K, S> Layer<K, S>
+// TODO(Unavailable): Implement essential traits (Debug, Clone, etc...)
+//
+// This is gonna be complicated, because I can't "prove" `Kind::Data<R>` bounds.
+// So I either puts those bounds on `Kind::Data` (which would force me to put
+// them everywhere), or, I only put them on `impl Trait for LayerKind<S>` which
+// would be better, but still terrible.
+#[rustfmt::skip]
+pub enum LayerKind<S>
 where
-    K: Kind,
-    S: Step + AsRef<Header>,
+    S: Step,
 {
+    Regular (Layer< Regular, S>),
+    Linework(Layer<Linework, S>),
+    Mask    (Layer<    Mask, S>),
+    Set     (Layer<     Set, S>),
+}
+
+impl<S> LayerKind<S>
+where
+    S: Step,
+{
+    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: Read,
+    {
+        let mut reader = BinReader::new(reader);
+
+        match reader.read_u32()? {
+            // PERF(Unavailable): Is LLVM able to remove the extra level of
+            // indirection?
+            0x03 => Layer::from_reader(&mut reader).map(Self::Regular),
+            0x05 => Layer::from_reader(&mut reader).map(Self::Linework),
+            0x06 => Layer::from_reader(&mut reader).map(Self::Mask),
+            0x08 => Layer::from_reader(&mut reader).map(Self::Set),
+            _ => Err(io::Error::from(InvalidData)),
+        }
+    }
+}
+
+macro_rules! forward_into_kind {
+    ($($(#[$docs:meta])* fn $name:ident() -> $Ty:ty)+) => {$(
+        $(#[$docs])*
+        #[inline]
+        pub fn $name(&self) -> $Ty {
+            match self {
+                Self::Regular (layer) => layer.$name(),
+                Self::Linework(layer) => layer.$name(),
+                Self::Mask    (layer) => layer.$name(),
+                Self::Set     (layer) => layer.$name(),
+            }
+        }
+    )+};
+}
+
+// NIGHTLY(macro_metavar_expr_concat):
+macro_rules! impl_layer_func {
+    ([S: $($Bounds:tt)+]
+        $($(#[$docs:meta])* pub fn $fn:ident($($self:tt)+) -> $Ty:ty
+        $block:block)+
+    ) => {
+        impl<K, S, C> Layer<K, S, C>
+        where
+            K: Kind,
+            S: $($Bounds)+
+        {$(
+            $(#[$docs])*
+            #[inline]
+            pub fn $fn($($self)+) -> $Ty
+                $block
+        )+}
+
+        impl<S> LayerKind<S>
+        where
+            S: $($Bounds)+
+        {
+            forward_into_kind! {$(
+                $(#[$docs])*
+                fn $fn() -> $Ty
+            )+}
+        }
+    };
+}
+
+impl_layer_func! { [S: Step + AsRef<Header>]
     /// The identifier of the layer.
     pub fn id(&self) -> u32 {
         self.step.as_ref().id
@@ -101,11 +170,7 @@ where
     }
 }
 
-impl<K, S> Layer<K, S>
-where
-    K: Kind,
-    S: Step + AsRef<Metadata>,
-{
+impl_layer_func! { [S: Step + AsRef<Metadata>]
     /// The layer's name
     pub fn name(&self) -> &str {
         &self.step.as_ref().name
@@ -122,9 +187,9 @@ where
     }
 }
 
-impl<S> Layer<Regular, S>
+impl<S, C> Layer<Regular, S, C>
 where
-    S: Step + AsRef<Metadata>,
+    S: Step,
     S::Data<Regular>: AsRef<Regular>,
 {
     /// The id of the `Mask` that is attached to this layer.
@@ -138,9 +203,9 @@ where
     }
 }
 
-impl<S> Layer<Linework, S>
+impl<S, C> Layer<Linework, S, C>
 where
-    S: Step + AsRef<Metadata>,
+    S: Step,
     S::Data<Linework>: AsRef<Linework>,
 {
     /// The id of the `Mask` that is attached to this layer.
@@ -149,9 +214,9 @@ where
     }
 }
 
-impl<S> Layer<Mask, S>
+impl<S, C> Layer<Mask, S, C>
 where
-    S: Step + AsRef<Metadata>,
+    S: Step,
     S::Data<Mask>: AsRef<Mask>,
 {
     // Tooltip: Apply layer mask
@@ -165,9 +230,9 @@ where
     }
 }
 
-impl<S> Layer<Set, S>
+impl<S, C> Layer<Set, S, C>
 where
-    S: Step + AsRef<Metadata>,
+    S: Step,
     S::Data<Set>: AsRef<Set>,
 {
     /// Wether or not the set is expanded within the layers panel.
@@ -176,7 +241,7 @@ where
     }
 }
 
-impl Layer<Regular, Data> {
+impl<C> Layer<Regular, Data, C> {
     /// Borrowed RGBA pre-multiplied alpha pixels.
     pub fn data(&self) -> &[u8] {
         &self.kind.data
@@ -209,585 +274,37 @@ impl Layer<Regular, Data> {
     }
 }
 
-#[rustfmt::skip]
-pub enum LayerKind<S>
-where
-    S: Step,
-{
-    Regular (Layer< Regular, S>),
-    Linework(Layer<Linework, S>),
-    Mask    (Layer<    Mask, S>),
-    Set     (Layer<     Set, S>),
+// NIGHTLY(macro_metavar_expr_concat):
+macro_rules! kind_conv {
+    ($($Ty:ident => $as_fn:ident|$to_fn:ident),+) => {$(
+        kind_conv! { $Ty => $as_fn(&self) -> &Layer }
+        kind_conv! { $Ty => $to_fn( self) ->  Layer }
+    )+};
+    ($Ty:ident => $fn:ident($($self:tt)+) -> $($LayerTy:tt)+) => {
+        #[doc = concat!("Returns the contained layer kind as `Layer<", stringify!($Ty), ", S>`, if possible.")]
+        #[inline]
+        pub fn $fn($($self)+) -> Option<$($LayerTy)+<$Ty, S>> {
+            let Self::$Ty(layer) = $($self)+ else { return None; };
+            Some(layer)
+        }
+    };
 }
 
 impl<S> LayerKind<S>
 where
     S: Step,
 {
-    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
-    where
-        R: Read,
-    {
-        let mut reader = BinReader::new(reader);
-
-        match reader.read_u32()? {
-            // PERF(Unavailable): Is LLVM able to remove the extra level of
-            // indirection?
-            0x03 => Layer::from_reader(&mut reader).map(Self::Regular),
-            0x05 => Layer::from_reader(&mut reader).map(Self::Linework),
-            0x06 => Layer::from_reader(&mut reader).map(Self::Mask),
-            0x08 => Layer::from_reader(&mut reader).map(Self::Set),
-            _ => Err(io::Error::from(INVALID)),
-        }
+    kind_conv! {
+        Regular =>  as_regular| into_regular,
+       Linework => as_linework|into_linework,
+           Mask =>     as_mask|    into_mask,
+            Set =>      as_set|     into_set
     }
 }
 
-impl<S> LayerKind<S>
-where
-    S: Step,
-{
-    // TODO(Unavailable):
-    //
-    // pub fn as_regular(&self) -> Option<&Layer<Regular, S>> {
-    //     let Self::Regular(layer) = self else {
-    //         return None;
-    //     };
-    //     Some(layer)
-    // }
+// newtypes
 
-    // TODO(Unavailable): Forward methods.
-}
-
-// kind
-
-pub trait Kind
-where
-    Self: Sized,
-{
-    #[doc(hidden)]
-    type Data;
-
-    #[doc(hidden)]
-    fn uninit() -> MaybeUninit<Self>;
-
-    #[doc(hidden)]
-    fn update<R: Read>(
-        uninit: &mut MaybeUninit<Self>,
-        reader: &mut BinReader<R>,
-        tag: StreamTag,
-    ) -> io::Result<()>;
-
-    // TODO(Unavailable): This should probably be marked as `unsafe`.
-    //
-    // We "can't" guaranteed that `uninit` is the same value returned from the
-    // `uninit()` call, and that `update()` was actually called on this value.
-    #[doc(hidden)]
-    fn init(uninit: MaybeUninit<Self>) -> io::Result<Self>;
-
-    #[doc(hidden)]
-    fn data<R>(reader: &mut BinReader<R>, dimensions: (usize, usize)) -> io::Result<Self::Data>
-    where
-        R: Read;
-}
-
-pub struct Regular {
-    mask: Option<TrustedId>,
-    effect: Option<Effect>,
-}
-
-impl Kind for Regular {
-    type Data = Box<[u8]>;
-
-    #[inline]
-    fn uninit() -> MaybeUninit<Self> {
-        MaybeUninit::zeroed()
-    }
-
-    fn update<R: Read>(
-        uninit: &mut MaybeUninit<Self>,
-        reader: &mut BinReader<R>,
-        tag: StreamTag,
-    ) -> io::Result<()> {
-        let uninit = uninit.as_mut_ptr();
-
-        match tag {
-            StreamTag::Plid => {
-                let plid = reader.read_u32()?;
-                let plid = TrustedId::try_new(plid)?;
-
-                // SAFETY: `uninit` is not null and it is properly aligned.
-                let mask = unsafe { addr_of_mut!((*uninit).mask) };
-                // SAFETY: `mask` is not null and it is properly aligned.
-                unsafe { mask.write(Some(plid)) };
-            }
-            StreamTag::Peff => {
-                let enabled = reader.read_bool()?;
-                let opacity = reader.read_u8()?;
-                let width = reader.read_u8()?;
-
-                if enabled {
-                    let peff = Effect::try_new(opacity, width)?;
-
-                    // SAFETY: `uninit` is not null and it is properly aligned.
-                    let effect = unsafe { addr_of_mut!((*uninit).effect) };
-                    // SAFETY: `effect` is not null and it is properly aligned.
-                    unsafe { effect.write(Some(peff)) };
-                };
-            }
-            _ => return Err(io::Error::from(UNSUPPORTED)),
-        };
-
-        Ok(())
-    }
-
-    #[inline]
-    fn init(uninit: MaybeUninit<Self>) -> io::Result<Self> {
-        // SAFETY: A struct with only `Option<T>`s is layout compatible with
-        // `MaybeUninit::zeroed()`.
-        Ok(unsafe { uninit.assume_init() })
-    }
-
-    #[inline]
-    fn data<R>(reader: &mut BinReader<R>, dimensions: (usize, usize)) -> io::Result<Self::Data>
-    where
-        R: Read,
-    {
-        read_raster_data::<4, _>(reader, dimensions).map(Vec::into_boxed_slice)
-    }
-}
-
-impl AsRef<Regular> for Regular {
-    fn as_ref(&self) -> &Regular {
-        self
-    }
-}
-
-pub struct Linework {
-    mask: Option<TrustedId>,
-}
-
-impl Kind for Linework {
-    type Data = core::convert::Infallible;
-
-    fn uninit() -> MaybeUninit<Self> {
-        MaybeUninit::zeroed()
-    }
-
-    fn update<R: Read>(
-        uninit: &mut MaybeUninit<Self>,
-        reader: &mut BinReader<R>,
-        tag: StreamTag,
-    ) -> io::Result<()> {
-        let uninit = uninit.as_mut_ptr();
-
-        match tag {
-            StreamTag::Plid => {
-                let plid = reader.read_u32()?;
-                let plid = TrustedId::try_new(plid)?;
-
-                // SAFETY: `uninit` is not null and it is properly aligned.
-                let mask = unsafe { addr_of_mut!((*uninit).mask) };
-                // SAFETY: `mask` is not null and it is properly aligned.
-                unsafe { mask.write(Some(plid)) };
-            }
-            _ => return Err(io::Error::from(UNSUPPORTED)),
-        };
-
-        Ok(())
-    }
-
-    fn init(uninit: MaybeUninit<Self>) -> io::Result<Self> {
-        // SAFETY: A struct with only `Option<T>`s is layout compatible with
-        // `MaybeUninit::zeroed()`.
-        Ok(unsafe { uninit.assume_init() })
-    }
-
-    fn data<R>(_: &mut BinReader<R>, _: (usize, usize)) -> io::Result<Self::Data>
-    where
-        R: Read,
-    {
-        unimplemented!()
-    }
-}
-
-impl AsRef<Linework> for Linework {
-    fn as_ref(&self) -> &Linework {
-        self
-    }
-}
-
-const BOOL_SENTINEL: u8 = u8::MAX;
-
-pub struct Mask {
-    active: bool,
-    linked: bool,
-}
-
-impl Kind for Mask {
-    type Data = Box<[u8]>;
-
-    fn uninit() -> MaybeUninit<Self> {
-        let mut val = MaybeUninit::uninit();
-        let val_ptr = val.as_mut_ptr();
-        let val_ptr = val_ptr as *mut u8;
-        // SAFETY: `val_ptr` is not null and it is properly aligned.
-        unsafe { val_ptr.write_bytes(BOOL_SENTINEL, 2) };
-
-        val
-    }
-
-    fn update<R: Read>(
-        uninit: &mut MaybeUninit<Self>,
-        reader: &mut BinReader<R>,
-        tag: StreamTag,
-    ) -> io::Result<()> {
-        let uninit = uninit.as_mut_ptr();
-
-        match tag {
-            StreamTag::Lmfl => {
-                let lmfl = reader.read_u32()?;
-
-                // SAFETY: `uninit` is not null and it is properly aligned.
-                let active = unsafe { addr_of_mut!((*uninit).active) };
-                // SAFETY: `active` is not null and it is properly aligned.
-                unsafe { active.write(lmfl & 1 != 0) };
-
-                // SAFETY: `uninit` is not null and it is properly aligned.
-                let linked = unsafe { addr_of_mut!((*uninit).linked) };
-                // SAFETY: `linked` is not null and it is properly aligned.
-                unsafe { linked.write(lmfl & 2 != 0) };
-            }
-            _ => return Err(io::Error::from(UNSUPPORTED)),
-        };
-
-        Ok(())
-    }
-
-    fn init(uninit: MaybeUninit<Self>) -> io::Result<Self> {
-        let val = uninit.as_ptr();
-        let val = val as *const [u8; 2];
-        // SAFETY: `Struct(bool, bool)` has the same layout as `[u8; 2]`.
-        let val = unsafe { *val };
-
-        if val.contains(&BOOL_SENTINEL) {
-            return Err(io::Error::from(INVALID));
-        };
-
-        // SAFETY: `uninit` doesn't have any `BOOL_SENTINEL` bytes in it, which
-        // means that `update()` encountered a `Lmfl` tag, and initialized all
-        // struct fields.
-        Ok(unsafe { uninit.assume_init() })
-    }
-
-    #[inline]
-    fn data<R>(reader: &mut BinReader<R>, dimensions: (usize, usize)) -> io::Result<Self::Data>
-    where
-        R: Read,
-    {
-        read_raster_data::<1, _>(reader, dimensions).map(Vec::into_boxed_slice)
-    }
-}
-
-impl AsRef<Mask> for Mask {
-    fn as_ref(&self) -> &Mask {
-        self
-    }
-}
-
-pub struct Set {
-    open: bool,
-}
-
-impl Kind for Set {
-    type Data = ();
-
-    fn uninit() -> MaybeUninit<Self> {
-        let mut val = MaybeUninit::uninit();
-        let val_ptr = val.as_mut_ptr();
-        let val_ptr = val_ptr as *mut u8;
-        // SAFETY: `val_ptr` is not null and it is properly aligned.
-        unsafe { val_ptr.write(BOOL_SENTINEL) };
-
-        val
-    }
-
-    fn update<R: Read>(
-        uninit: &mut MaybeUninit<Self>,
-        reader: &mut BinReader<R>,
-        tag: StreamTag,
-    ) -> io::Result<()> {
-        let uninit = uninit.as_mut_ptr();
-
-        match tag {
-            StreamTag::Fopn => {
-                let fopn = reader.read_bool()?;
-
-                // SAFETY: `uninit` is not null and it is properly aligned.
-                let open = unsafe { addr_of_mut!((*uninit).open) };
-                // SAFETY: `open` is not null and it is properly aligned.
-                unsafe { open.write(fopn) };
-            }
-            _ => return Err(io::Error::from(UNSUPPORTED)),
-        };
-
-        Ok(())
-    }
-
-    fn init(uninit: MaybeUninit<Self>) -> io::Result<Self> {
-        let val = uninit.as_ptr();
-        let val = val as *const u8;
-
-        // SAFETY: `val` bytes are initialized by the `uninit()` call.
-        if unsafe { val.read() } == BOOL_SENTINEL {
-            return Err(io::Error::from(INVALID));
-        };
-
-        // SAFETY: `uninit` doesn't have any `BOOL_SENTINEL` bytes in it, which
-        // means that `update()` encountered a `Fopn` tag, and initialized all
-        // struct fields.
-        Ok(unsafe { uninit.assume_init() })
-    }
-
-    fn data<R>(_: &mut BinReader<R>, _: (usize, usize)) -> io::Result<Self::Data>
-    where
-        R: Read,
-    {
-        Ok(())
-    }
-}
-
-impl AsRef<Set> for Set {
-    fn as_ref(&self) -> &Set {
-        self
-    }
-}
-
-// TODO(Unavailable):
-pub struct Unknown;
-
-// (parsed) state
-
-pub trait Step
-where
-    Self: Sized,
-{
-    #[doc(hidden)]
-    type Data<K: Kind>;
-
-    #[doc(hidden)]
-    fn new<R, K>(reader: &mut BinReader<R>) -> io::Result<(Self, Self::Data<K>)>
-    where
-        R: Read,
-        K: Kind;
-}
-
-pub struct Header {
-    id: u32,
-    bounds: Bounds,
-    opacity: Opacity,
-    visible: bool,
-    // NAMING(Unavailable):
-    lock_opacity: bool,
-    // NAMING(Unavailable):
-    clipping: bool,
-    blending: BlendingMode,
-}
-
-impl Step for Header {
-    type Data<K: Kind> = PhantomData<K>;
-
-    #[inline]
-    fn new<R, K>(reader: &mut BinReader<R>) -> io::Result<(Self, Self::Data<K>)>
-    where
-        R: Read,
-        K: Kind,
-    {
-        let id = reader.read_u32()?;
-
-        let (x, y) = (reader.read_i32()?, reader.read_i32()?);
-        let (w, h) = (reader.read_u32()?, reader.read_u32()?);
-        let bounds = Bounds::try_new(x, y, w, h)?;
-
-        let _ = reader.read_u32()?;
-
-        let opacity = reader.read_u8()?;
-        let opacity = Opacity::try_new(opacity)?;
-
-        let visible = reader.read_bool()?;
-        let lock_opacity = reader.read_bool()?;
-        let clipping = reader.read_bool()?;
-
-        let _ = reader.read_u8()?;
-
-        let blending = reader.read_array()?;
-        let blending = BlendingMode::try_from_fourcc(blending)?;
-
-        Ok((
-            Self {
-                id,
-                bounds,
-                opacity,
-                visible,
-                lock_opacity,
-                clipping,
-                blending,
-            },
-            PhantomData,
-        ))
-    }
-}
-
-impl AsRef<Header> for Header {
-    fn as_ref(&self) -> &Header {
-        self
-    }
-}
-
-pub struct Metadata {
-    header: Header,
-    // TODO(Unavailable): Maybe storing `CStr` here wouldn't be a big deal...
-    name: Box<str>,
-    set: Option<TrustedId>,
-    tex: Option<Texture>,
-}
-
-impl Step for Metadata {
-    type Data<K: Kind> = K;
-
-    fn new<R, K>(reader: &mut BinReader<R>) -> io::Result<(Self, Self::Data<K>)>
-    where
-        R: Read,
-        K: Kind,
-    {
-        let mut meta = Self {
-            header: Header::new::<_, K>(reader)?.0,
-            name: Box::default(),
-            set: None,
-            tex: None,
-        };
-        let mut data = K::uninit();
-
-        while let Some((tag, size)) = reader.read_stream_header().transpose()? {
-            let size = size as usize;
-
-            #[rustfmt::skip]
-            let Some(tag) = tag else {
-                reader.skip(size)?; continue;
-            };
-
-            match tag {
-                StreamTag::Name => {
-                    let name = reader.read_array::<256>()?;
-                    meta.name = CStr::from_bytes_until_nul(&name)
-                        .map_err(|_| INVALID)?
-                        .to_string_lossy()
-                        .into_owned()
-                        .into_boxed_str();
-                }
-                StreamTag::Pfid => {
-                    let _ = meta
-                        .set
-                        .insert(reader.read_u32().and_then(TrustedId::try_new)?);
-                }
-                StreamTag::Texn => {
-                    let name = reader.read_array::<64>()?;
-                    let name = CStr::from_bytes_until_nul(&name)
-                        .map_err(|_| INVALID)?
-                        .to_bytes();
-                    let name = TextureName::try_from_bytes(name)?;
-
-                    meta.tex.get_or_insert_with(Texture::default).name = name;
-                }
-                // FIX(Unavailable): This is order dependent with `Texn`.
-                StreamTag::Texp => {
-                    // These values are always set, even if `Texn` isn't.
-                    let scale = reader.read_u16()?;
-                    let opacity = reader.read_u8()?;
-                    let opacity = Opacity::try_new(opacity)?;
-
-                    if let Some(ref mut tex) = meta.tex {
-                        tex.scale = scale;
-                        tex.opacity = opacity;
-                    };
-                }
-                tag => match K::update(&mut data, reader, tag) {
-                    Ok(()) => {}
-                    Err(err) if err.kind() == UNSUPPORTED => reader.skip(size)?,
-                    Err(err) => return Err(err),
-                },
-            }
-        }
-
-        K::init(data).map(|data| (meta, data))
-    }
-}
-
-impl AsRef<Header> for Metadata {
-    fn as_ref(&self) -> &Header {
-        &self.header
-    }
-}
-
-impl AsRef<Metadata> for Metadata {
-    fn as_ref(&self) -> &Metadata {
-        self
-    }
-}
-
-pub struct Data {
-    meta: Metadata,
-}
-
-#[doc(hidden)]
-pub struct KindData<K>
-where
-    K: Kind,
-{
-    kind: K,
-    data: K::Data,
-}
-
-impl<K> AsRef<K> for KindData<K>
-where
-    K: Kind,
-{
-    fn as_ref(&self) -> &K {
-        &self.kind
-    }
-}
-
-impl Step for Data {
-    type Data<K: Kind> = KindData<K>;
-
-    #[inline]
-    fn new<R, K>(reader: &mut BinReader<R>) -> io::Result<(Self, Self::Data<K>)>
-    where
-        R: Read,
-        K: Kind,
-    {
-        let (meta, kind) = Metadata::new(reader)?;
-
-        let Bounds { width, height, .. } = meta.header.bounds;
-        let bounds = (width as usize, height as usize);
-
-        K::data(reader, bounds).map(|data| (Self { meta }, KindData { kind, data }))
-    }
-}
-
-impl AsRef<Header> for Data {
-    fn as_ref(&self) -> &Header {
-        &self.meta.header
-    }
-}
-
-impl AsRef<Metadata> for Data {
-    fn as_ref(&self) -> &Metadata {
-        &self.meta
-    }
-}
-
-// layer field structs
-
+// NIGHTLY(macro_metavar_expr_concat):
 macro_rules! try_new {
     ($(#[$docs:meta])*
         fn $fn:ident|$try_fn:ident($($param:ident: $ty:ty),+) -> Option<Self>
@@ -802,12 +319,10 @@ macro_rules! try_new {
         #[inline]
         #[allow(unused)]
         fn $try_fn($($param: $ty),+) -> io::Result<Self> {
-            Self::$fn($($param),+).ok_or(io::Error::from(INVALID))
+            Self::$fn($($param),+).ok_or(io::Error::from(InvalidData))
         }
     }
 }
-
-// TODO(Unavailable): should newtypes use the `get()` or `Deref` pattern.
 
 // NIGHTLY(restrictions): Immutable fields
 // NIGHTLY(pattern_types):
@@ -815,8 +330,8 @@ macro_rules! try_new {
 /// A layer ID that can't be `zero` nor `one`.
 ///
 /// This is called `TrustedId` (instead of just `Id`), because `Header` itself
-/// can't use this struct. This is only intended for references of layers that
-/// are known to be DOCS(Unavailable):
+/// can't use this struct. This is only intended for references of layer kinds
+/// that are known to be DOCS(Unavailable):
 
 // NIGHTLY(pattern_types): This should be `NonZeroNorOneU32`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -851,10 +366,16 @@ impl Opacity {
     try_new! {
         /// Creates a new `Opacity` struct.
         ///
-        /// Returns `None` if `value` > `100`.
+        /// Returns `None` if `value > 100`.
         fn new|try_new(value: u8) -> Option<Self> {
             (value <= 100).then_some(Self(value))
         }
+    }
+
+    /// Returns the contained value as a primitive type.
+    #[inline]
+    pub fn get(self) -> u8 {
+        self.0
     }
 }
 
@@ -862,14 +383,6 @@ impl Default for Opacity {
     /// Creates `Opacity(100)`.
     fn default() -> Self {
         Self(100)
-    }
-}
-
-impl Deref for Opacity {
-    type Target = u8;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -914,10 +427,8 @@ impl Bounds {
     }
 }
 
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BlendingMode {
-    // TODO(Unavailable): Assign actual fourcc values.
     PassThrough,
     Normal,
     Multiply,
@@ -931,14 +442,10 @@ pub enum BlendingMode {
 
 impl BlendingMode {
     try_new! {
-        /// Creates a new `BlendingMode` struct from a `fourcc` array.
+        /// Creates a new `BlendingMode` struct from a byte slice.
         ///
-        /// Sai stores their values on little-endian, so this functions expects
-        /// `b"ssap"` instead of `b"pass"`. Read [`BlendingMode`]'s docs for more
-        /// information on this.
-        ///
-        /// Returns `None` if invalid fourcc.
-        fn from_fourcc|try_from_fourcc(buf: [u8; 4]) -> Option<Self> {
+        /// Returns `None` if invalid blending mode.
+        fn from_bytes|try_from_bytes(buf: [u8; 4]) -> Option<Self> {
             let mut buf = buf;
             buf.reverse();
             Some(match &buf {
@@ -957,7 +464,7 @@ impl BlendingMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TextureName {
     WatercolorA,
     WatercolorB,
@@ -984,7 +491,7 @@ impl TextureName {
     }
 }
 
-impl Display for TextureName {
+impl fmt::Display for TextureName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -1084,164 +591,6 @@ impl Default for Effect {
     }
 }
 
-#[doc(hidden)]
-#[derive(Debug)]
-pub enum StreamTag {
-    Name,
-    Pfid,
-    Plid,
-    Fopn,
-    Texn,
-    Texp,
-    Peff,
-    Lmfl,
-}
-
-impl TryFrom<[u8; 4]> for StreamTag {
-    type Error = io::Error;
-
-    fn try_from(value: [u8; 4]) -> io::Result<Self> {
-        Ok(match &value {
-            b"name" => Self::Name,
-            b"pfid" => Self::Pfid,
-            b"plid" => Self::Plid,
-            b"fopn" => Self::Fopn,
-            b"texn" => Self::Texn,
-            b"texp" => Self::Texp,
-            b"peff" => Self::Peff,
-            b"lmfl" => Self::Lmfl,
-            _ => return Err(io::Error::from(INVALID)),
-        })
-    }
-}
-
-// kind utils
-
 fn png_default_path(id: u32, name: &str) -> PathBuf {
     PathBuf::from(format!("{id:0>8x}-{name}.png"))
-}
-
-// PERF(Unavailable): While this function is very elegantly written, using
-// `memcpy` and `memset` would probably yield better results.
-fn rle_decompress<const STRIDE: usize>(dst: &mut [u8], src: &[u8]) {
-    let mut src = src.iter();
-    let mut dst = dst.iter_mut().step_by(STRIDE);
-    let mut src = || src.next().expect("src has items");
-    let mut dst = || dst.next().expect("dst has items");
-
-    let mut read = 0;
-    while read < PAGE_SIZE / STRIDE {
-        let len = *src() as usize;
-
-        read += match len.cmp(&128) {
-            Ordering::Less => {
-                let len = len + 1;
-                (0..len).for_each(|_| *dst() = *src());
-                len
-            }
-            Ordering::Greater => {
-                let len = (len ^ 255) + 2;
-                let val = *src();
-                (0..len).for_each(|_| *dst() = val);
-                len
-            }
-            Ordering::Equal => 0,
-        }
-    }
-}
-
-macro_rules! pos2idx {
-    ($y:expr, $x:expr, $stride:expr) => {
-        $y * $stride + $x
-    };
-}
-
-macro_rules! process_raster_data {
-    ($BPP:expr => $dst:expr, $src:expr) => {{
-        // PERF(Unavailable): Is there any difference between 2 different ifs?
-        if $BPP == 4 {
-            // Swaps BGRA -> RGBA
-            $dst[0] = $src[2];
-            $dst[1] = $src[1];
-            $dst[2] = $src[0];
-            $dst[3] = $src[3];
-        } else if $BPP == 1 {
-            // Mask data is stored within `0..=64`.
-            $dst[0] = ($src[0] * 4).min(255);
-        } else {
-            unsafe { core::hint::unreachable_unchecked() };
-        };
-    }};
-}
-
-fn read_raster_data<const BPP: usize, R>(
-    reader: &mut BinReader<R>,
-    (width, height): (usize, usize),
-) -> io::Result<Vec<u8>>
-where
-    R: Read,
-{
-    const TILE_SIZE: usize = 32;
-
-    debug_assert!(BPP == 4 || BPP == 1, "only 8-bit rgba and grayscale");
-
-    let tile_map_height = height / TILE_SIZE;
-    let tile_map_width = width / TILE_SIZE;
-
-    let mut tile_map = vec![0; tile_map_height * tile_map_width];
-    reader.read_exact(&mut tile_map)?;
-    let tile_map = tile_map; // Prevents `tile_map` to be mutable.
-
-    let mut pixels = vec![0; width * height * BPP];
-    // NIGHTLY(const_generic_exprs): This should actually be `BPP * 1024`.
-    let mut rle_dst = [0; PAGE_SIZE];
-    let mut rle_src = [0; PAGE_SIZE / 2];
-
-    for (y, x) in (0..tile_map_height)
-        .cartesian_product(0..tile_map_width)
-        .filter(|(y, x)| tile_map[pos2idx!(y, x, tile_map_width)] != 0)
-    {
-        // Read the actual pixel's channel (first half). Skip the next half (unknown).
-        for channel in 0..BPP * 2 {
-            let size = reader.read_u16()?.into();
-            let Some(buf) = rle_src.get_mut(..size) else {
-                return Err(io::Error::from(INVALID));
-            };
-            reader.read_exact(buf)?;
-
-            // TODO(Unavailable): Use `reader.skip()` when `channel >= BPP`?
-            //
-            // It might generate better codegen, because LLVM would be able to
-            // realize that the `read` buffer is not used and remove any copying
-            // involved.
-            if channel < BPP {
-                rle_decompress::<BPP>(&mut rle_dst[channel..], &rle_src);
-            }
-        }
-
-        // SAFETY: `BPP` is always `<= 4`, and `4 * 1024` is `4096`, which is the
-        // size of `rle_dst`.
-        let rle_dst = unsafe { rle_dst.get_unchecked(..BPP * 1024) };
-
-        rle_dst.chunks_exact(TILE_SIZE * BPP).fold(
-            // Offset of the first element for this 32x32 tile.
-            pos2idx!(y * width, x * TILE_SIZE, TILE_SIZE),
-            |offset, src| {
-                for (dst, src) in pixels[offset * BPP..]
-                    .chunks_exact_mut(BPP)
-                    .zip(src.chunks_exact(BPP))
-                {
-                    // NOTE: LLVM can't auto-vectorize between functions (even
-                    // when inlining is performed), however a macro copy-pastes
-                    // its contents as is.
-                    process_raster_data!(BPP => dst, src);
-                }
-
-                // Skips `width` bytes to get the next row.
-                offset + width
-            },
-        );
-    }
-
-    Ok(pixels)
 }
