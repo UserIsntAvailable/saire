@@ -32,7 +32,7 @@ pub(crate) struct FileSystemReader {
     /// The reader holding the encrypted SAI file bytes.
     bufreader: RefCell<BufReader<Box<dyn ReadSeek>>>,
 
-    // FIX: Instead of caching _all_ the `TableEntry`s I could only cache _up to_ an X amount of
+    // TODO: Instead of caching _all_ the `TableEntry`s I could only cache _up to_ an X amount of
     // them, and remove previous entries if that threshold is met.
     //
     /// Cached `TableEntry`s.
@@ -77,7 +77,7 @@ impl FileSystemReader {
         }
     }
 
-    // FIX: `seek()` is not used for now.
+    // TODO: `seek()` is not used for now.
     //
     // I'm thinking of providing a `feature` that would allow the user to load the `whole` sai file
     // on memory, then decrypt the file buffer, then store it here instead of using an `BufReader`.

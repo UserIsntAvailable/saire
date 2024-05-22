@@ -277,12 +277,9 @@ impl Layer {
                 StreamTag::Name => {
                     let name = reader.read_array::<256>()?;
                     let name = CStr::from_bytes_until_nul(&name)
-                        .expect("contains null character")
-                        .to_owned()
-                        .into_string()
-                        // FIX(Unavailable): I'm pretty sure the names can be UTF-16, specially
-                        // because we are talking about windows here...
-                        .expect("UTF-8");
+                        .map_err(|_| io::ErrorKind::InvalidData)?
+                        .to_string_lossy()
+                        .into_owned();
                     let _ = layer.name.insert(name);
                 }
                 StreamTag::Pfid => _ = layer.parent_set.insert(reader.read_u32()?),
