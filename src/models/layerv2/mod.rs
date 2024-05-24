@@ -10,7 +10,11 @@ use crate::{
     },
     pixel_ops::premultiplied_to_straight,
 };
-use core::{fmt, marker::PhantomData, num::NonZeroU32};
+use core::{
+    fmt::{self, Debug},
+    marker::PhantomData,
+    num::NonZeroU32,
+};
 use std::{
     io::{self, ErrorKind::InvalidData, Read},
     path::{Path, PathBuf},
@@ -46,12 +50,6 @@ where
     }
 }
 
-// TODO(Unavailable): Implement essential traits (Debug, Clone, etc...)
-//
-// This is gonna be complicated, because I can't "prove" `Kind::Data<R>` bounds.
-// So I either puts those bounds on `Kind::Data` (which would force me to put
-// them everywhere), or, I only put them on `impl Trait for LayerKind<S>` which
-// would be better, but still terrible.
 #[rustfmt::skip]
 pub enum LayerKind<S>
 where
@@ -85,23 +83,7 @@ where
     }
 }
 
-macro_rules! forward_into_kind {
-    ($($(#[$docs:meta])* fn $name:ident() -> $Ty:ty)+) => {$(
-        $(#[$docs])*
-        #[inline]
-        pub fn $name(&self) -> $Ty {
-            match self {
-                Self::Regular (layer) => layer.$name(),
-                Self::Linework(layer) => layer.$name(),
-                Self::Mask    (layer) => layer.$name(),
-                Self::Set     (layer) => layer.$name(),
-            }
-        }
-    )+};
-}
-
-// NIGHTLY(macro_metavar_expr_concat):
-macro_rules! impl_layer_func {
+macro_rules! impl_layer {
     ([S: $($Bounds:tt)+]
         $($(#[$docs:meta])* pub fn $fn:ident($($self:tt)+) -> $Ty:ty
         $block:block)+
@@ -120,16 +102,22 @@ macro_rules! impl_layer_func {
         impl<S> LayerKind<S>
         where
             S: $($Bounds)+
-        {
-            forward_into_kind! {$(
-                $(#[$docs])*
-                fn $fn() -> $Ty
-            )+}
-        }
+        {$(
+            $(#[$docs])*
+            #[inline]
+            pub fn $fn(&self) -> $Ty {
+                match self {
+                    Self::Regular (layer) => layer.$fn(),
+                    Self::Linework(layer) => layer.$fn(),
+                    Self::Mask    (layer) => layer.$fn(),
+                    Self::Set     (layer) => layer.$fn(),
+                }
+            }
+        )+}
     };
 }
 
-impl_layer_func! { [S: Step + AsRef<Header>]
+impl_layer! { [S: Step + AsRef<Header>]
     /// The identifier of the layer.
     pub fn id(&self) -> u32 {
         self.step.as_ref().id
@@ -170,7 +158,7 @@ impl_layer_func! { [S: Step + AsRef<Header>]
     }
 }
 
-impl_layer_func! { [S: Step + AsRef<Metadata>]
+impl_layer! { [S: Step + AsRef<Metadata>]
     /// The layer's name
     pub fn name(&self) -> &str {
         &self.step.as_ref().name
@@ -301,6 +289,62 @@ where
             Set =>      as_set|     into_set
     }
 }
+
+// NIGHTLY(non_lifetime_binders): I'm not really sure if this gonna fix annything...
+
+macro_rules! bounds {
+    (impl<S> $Trait:ident for LayerKind<S> $($block:tt)?) => {
+        impl<S> $Trait for LayerKind<S>
+        where
+            S: Step          + $Trait,
+            S::Data<Regular> : $Trait,
+            S::Data<Linework>: $Trait,
+            S::Data<Mask>    : $Trait,
+            S::Data<Set>     : $Trait,
+        $(
+            $block
+        )?
+    };
+}
+
+bounds! { impl<S> Clone for LayerKind<S> {
+    #[inline]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Regular (layer) => Self::Regular (layer.clone()),
+            Self::Linework(layer) => Self::Linework(layer.clone()),
+            Self::Mask    (layer) => Self::Mask    (layer.clone()),
+            Self::Set     (layer) => Self::Set     (layer.clone()),
+        }
+    }
+}}
+
+bounds! { impl<S> Debug for LayerKind<S> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Regular (layer) => layer.fmt(f),
+            Self::Linework(layer) => layer.fmt(f),
+            Self::Mask    (layer) => layer.fmt(f),
+            Self::Set     (layer) => layer.fmt(f),
+        }
+    }
+}}
+
+bounds! { impl<S> PartialEq for LayerKind<S> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Regular (self_), Self::Regular (other)) => self_ == other,
+            (Self::Linework(self_), Self::Linework(other)) => self_ == other,
+            (Self::Mask    (self_), Self::Mask    (other)) => self_ == other,
+            (Self::Set     (self_), Self::Set     (other)) => self_ == other,
+            _                                              => false,
+        }
+    }
+}}
+
+bounds! { impl<S> Eq for LayerKind<S> {} }
 
 // newtypes
 
