@@ -14,6 +14,7 @@ use core::{
     fmt::{self, Debug},
     marker::PhantomData,
     num::NonZeroU32,
+    ops,
 };
 use std::{
     io::{self, ErrorKind::InvalidData, Read},
@@ -50,6 +51,7 @@ where
     }
 }
 
+// TODO(Unavailable): From impls
 #[rustfmt::skip]
 pub enum LayerKind<S>
 where
@@ -65,6 +67,7 @@ impl<S> LayerKind<S>
 where
     S: Step,
 {
+    // TODO(Unavailable): Should this return `Result<Self, (u32, io::Error)>`?
     pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
     where
         R: Read,
@@ -290,7 +293,7 @@ where
     }
 }
 
-// NIGHTLY(non_lifetime_binders): I'm not really sure if this gonna fix annything...
+// NIGHTLY(non_lifetime_binders): I'm not really sure if this gonna fix anything...
 
 macro_rules! bounds {
     (impl<S> $Trait:ident for LayerKind<S> $($block:tt)?) => {
@@ -456,15 +459,26 @@ impl Bounds {
     try_new! {
         /// Creates a new `Bounds` struct.
         ///
-        /// Returns `None`, if `w` or `h` value is not divisible by 32.
-        fn new|try_new(x: i32, y: i32, w: u32, h: u32) -> Option<Self> {
-            let d32 = |val| val % 32 == 0;
+        /// Returns `None`, if:
+        ///
+        /// - `width` or `height` is not divisible by 32.
+        /// - `width` or `height` is `> 10016`.
+        /// - `x`, `y` is not within `-10016..=10016`.
+        fn new|try_new(x: i32, y: i32, width: u32, height: u32) -> Option<Self> {
+            #[rustfmt::skip] macro_rules! MAX_SIZE { () => { 10016 }; }
+            const RANGE: ops::RangeInclusive<i32> = -MAX_SIZE!()..=MAX_SIZE!();
 
-            (d32(w) && d32(h)).then_some(Self {
+            let div_by_32 = width % 32 == 0 && height % 32 == 0;
+            let within_range = RANGE.contains(&x)
+                && RANGE.contains(&y)
+                && width <= MAX_SIZE!()
+                && height <= MAX_SIZE!();
+
+            (div_by_32 && within_range).then_some(Self {
                 x,
                 y,
-                width: w,
-                height: h,
+                width,
+                height,
                 _priv: PhantomData,
             })
         }
