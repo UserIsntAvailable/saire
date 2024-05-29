@@ -11,7 +11,7 @@ use crate::{
     pixel_ops::premultiplied_to_straight,
 };
 use core::{
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
     marker::PhantomData,
     num::NonZeroU32,
     ops,
@@ -51,7 +51,6 @@ where
     }
 }
 
-// TODO(Unavailable): From impls
 #[rustfmt::skip]
 pub enum LayerKind<S>
 where
@@ -67,22 +66,56 @@ impl<S> LayerKind<S>
 where
     S: Step,
 {
-    // TODO(Unavailable): Should this return `Result<Self, (u32, io::Error)>`?
-    pub fn from_reader<R>(reader: &mut R) -> io::Result<Self>
+    pub fn from_reader<R>(reader: &mut R) -> Result<Self, FromReaderError>
     where
         R: Read,
     {
         let mut reader = BinReader::new(reader);
 
-        match reader.read_u32()? {
+        Ok(match reader.read_u32()? {
             // PERF(Unavailable): Is LLVM able to remove the extra level of
             // indirection?
-            0x03 => Layer::from_reader(&mut reader).map(Self::Regular),
-            0x05 => Layer::from_reader(&mut reader).map(Self::Linework),
-            0x06 => Layer::from_reader(&mut reader).map(Self::Mask),
-            0x08 => Layer::from_reader(&mut reader).map(Self::Set),
-            _ => Err(io::Error::from(InvalidData)),
+            0x03 => Layer::from_reader(&mut reader).map(Self::Regular)?,
+            0x05 => Layer::from_reader(&mut reader).map(Self::Linework)?,
+            0x06 => Layer::from_reader(&mut reader).map(Self::Mask)?,
+            0x08 => Layer::from_reader(&mut reader).map(Self::Set)?,
+            kind => return Err(FromReaderError::UnknownKind(kind)),
+        })
+    }
+}
+
+/// Possible errors returned by [`LayerKind::from_reader`].
+#[derive(Debug)]
+pub enum FromReaderError {
+    /// Error encountered while reading the underlying reader stream.
+    Io(io::Error),
+    /// The reader encountered an unknown layer kind identifier.
+    UnknownKind(u32),
+}
+
+impl Display for FromReaderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "{err}"),
+            Self::UnknownKind(kind) => write!(f, "Unknown kind '{kind}' encountered"),
         }
+    }
+}
+
+impl std::error::Error for FromReaderError {}
+
+impl From<FromReaderError> for io::Error {
+    fn from(value: FromReaderError) -> Self {
+        match value {
+            FromReaderError::Io(err) => err,
+            FromReaderError::UnknownKind(_) => io::Error::new(InvalidData, value.to_string()),
+        }
+    }
+}
+
+impl From<io::Error> for FromReaderError {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
     }
 }
 
@@ -266,11 +299,26 @@ impl<C> Layer<Regular, Data, C> {
 }
 
 // NIGHTLY(macro_metavar_expr_concat):
-macro_rules! kind_conv {
-    ($($Ty:ident => $as_fn:ident|$to_fn:ident),+) => {$(
-        kind_conv! { $Ty => $as_fn(&self) -> &Layer }
-        kind_conv! { $Ty => $to_fn( self) ->  Layer }
-    )+};
+macro_rules! impl_layer_convs {
+    ($($Ty:ident => $as_fn:ident|$to_fn:ident),+) => {
+        impl<S> LayerKind<S>
+        where
+            S: Step,
+        {$(
+            impl_layer_convs! { $Ty => $as_fn(&self) -> &Layer }
+            impl_layer_convs! { $Ty => $to_fn( self) ->  Layer }
+        )+}
+
+        // TODO(Unavailable): Should I allow Layer<K, S, C> and automatically/silently strip `C`?
+        $(impl<S> From<Layer<$Ty, S>> for LayerKind<S>
+        where
+            S: Step,
+        {
+            fn from(value: Layer<$Ty, S>) -> Self {
+                Self::$Ty(value)
+            }
+        })+
+    };
     ($Ty:ident => $fn:ident($($self:tt)+) -> $($LayerTy:tt)+) => {
         #[doc = concat!("Returns the contained layer kind as `Layer<", stringify!($Ty), ", S>`, if possible.")]
         #[inline]
@@ -281,16 +329,11 @@ macro_rules! kind_conv {
     };
 }
 
-impl<S> LayerKind<S>
-where
-    S: Step,
-{
-    kind_conv! {
-        Regular =>  as_regular| into_regular,
-       Linework => as_linework|into_linework,
-           Mask =>     as_mask|    into_mask,
-            Set =>      as_set|     into_set
-    }
+impl_layer_convs! {
+    Regular =>  as_regular| into_regular,
+   Linework => as_linework|into_linework,
+       Mask =>     as_mask|    into_mask,
+        Set =>      as_set|     into_set
 }
 
 // NIGHTLY(non_lifetime_binders): I'm not really sure if this gonna fix anything...
@@ -549,7 +592,7 @@ impl TextureName {
     }
 }
 
-impl fmt::Display for TextureName {
+impl Display for TextureName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
