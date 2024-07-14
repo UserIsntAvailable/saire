@@ -440,9 +440,9 @@ pub struct FatEntry {
     flags: u32,
     name: [c_uchar; 32],
     _pad1: u16,
-    // Not keeping FatKind directly here, because miri will complain that `0` is
-    // not a valid value for it (which is true, but it is up to the user to deal
-    // with that).
+    // NOTE: Don't store `FatKind` directly here; miri will complain that `0` is
+    // not a valid value for it, which is true, but it is up to the user to deal
+    // with that.
     kind: u8,
     _pad2: u8,
     next_block: u32, // TODO(Unavailable): Option<NonZeroU32>.
@@ -466,9 +466,10 @@ impl FatEntry {
     /// I (neither Wunkolo) haven't really looked into what are the possible
     /// values.
     ///
-    /// As a rule of thumb, if the most significant bit is `one`, then it _might_
-    /// be a valid entry; while this isn't a 100% guaranteed, it would be ok to
-    /// call methods for that entry.
+    /// As a rule of thumb, if the most significant bit is `one`, then paintool
+    /// sai would consider this entry to be valid; methods returning an `Option`
+    /// would _most likely_ return `Some`, however make sure to properly error-
+    /// handle against unknown inputs.
     ///
     /// If `0`, this entry is considered unused, so the contents are unspecified.
     #[inline]
@@ -568,7 +569,6 @@ impl AsMut<[u8]> for FatEntry {
 
 // Utilities
 
-// TODO(Unavailable): This could be part of cipher.
 fn checksum<const N: usize>(buf: &[u8; N]) -> u32
 where
     BlockSize<N>: SupportedBlockSize,
@@ -596,7 +596,6 @@ mod tests {
 
     const TABLE_INDEX: u32 = 0;
     const ROOT_INDEX: usize = 2;
-
     const BLOCK_SIZE: usize = 4096;
 
     fn table() -> [u8; BLOCK_SIZE] {
